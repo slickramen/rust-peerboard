@@ -1,183 +1,323 @@
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Style},
-    text::{Line, Span, Text},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
+    layout::{Constraint, Layout, Rect},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Paragraph},
     Frame,
 };
 
-use crate::app::{App, CurrentScreen, CurrentlyEditing};
+use crate::app::{App, Cell, CurrentScreen};
+
+/// Big block ASCII/unicode title banner
+const TITLE: &str = concat!(
+    "╔═╗╦ ╦╔═╗╔╦╗\n",
+    "║  ╠═╣╠═╣ ║ \n",
+    "╚═╝╩ ╩╩ ╩ ╩ ",
+);
 
 pub fn ui(frame: &mut Frame, app: &App) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(1),
-            Constraint::Length(3),
-        ])
-        .split(frame.area());
-
-    // TITLE
-    let title_block = Block::default()
-        .borders(Borders::ALL)
-        .style(Style::default());
-
-    let title = Paragraph::new(Text::styled(
-        "Create New Json",
-        Style::default().fg(Color::Green),
-    ))
-    .block(title_block);
-
-    frame.render_widget(title, chunks[0]);
-
-    // LIST ITEMS
-    let mut list_items = Vec::<ListItem>::new();
-
-    for key in app.pairs.keys() {
-        list_items.push(ListItem::new(Line::from(Span::styled(
-            format!("{: <25} : {}", key, app.pairs.get(key).unwrap()),
-            Style::default().fg(Color::Yellow),
-        ))));
-    }
-
-    let list = List::new(list_items);
-
-    frame.render_widget(list, chunks[1]);
-
-    // BOTTOM NAV
-        let current_navigation_text = vec![
-        // The first half of the text
-        match app.current_screen {
-            CurrentScreen::Main => Span::styled("Normal Mode", Style::default().fg(Color::Green)),
-            CurrentScreen::Editing => {
-                Span::styled("Editing Mode", Style::default().fg(Color::Yellow))
-            }
-            CurrentScreen::Exiting => Span::styled("Exiting", Style::default().fg(Color::LightRed)),
-        }
-        .to_owned(),
-        // A white divider bar to separate the two sections
-        Span::styled(" | ", Style::default().fg(Color::White)),
-        // The final section of the text, with hints on what the user is editing
-        {
-            if let Some(editing) = &app.currently_editing {
-                match editing {
-                    CurrentlyEditing::Key => {
-                        Span::styled("Editing Json Key", Style::default().fg(Color::Green))
-                    }
-                    CurrentlyEditing::Value => {
-                        Span::styled("Editing Json Value", Style::default().fg(Color::LightGreen))
-                    }
-                }
-            } else {
-                Span::styled("Not Editing Anything", Style::default().fg(Color::DarkGray))
-            }
-        },
-    ];
-
-    let mode_footer = Paragraph::new(Line::from(current_navigation_text))
-        .block(Block::default().borders(Borders::ALL));
-
-    // KEY HINTS
-    let current_keys_hint = {
-        match app.current_screen {
-            CurrentScreen::Main => Span::styled(
-                "(q) to quit / (e) to make new pair",
-                Style::default().fg(Color::Red),
-            ),
-            CurrentScreen::Editing => Span::styled(
-                "(ESC) to cancel/(Tab) to switch boxes/enter to complete",
-                Style::default().fg(Color::Red),
-            ),
-            CurrentScreen::Exiting => Span::styled(
-                "(q) to quit / (e) to make new pair",
-                Style::default().fg(Color::Red),
-            ),
-        }
-    };
-
-    let key_notes_footer =
-        Paragraph::new(Line::from(current_keys_hint)).block(Block::default().borders(Borders::ALL));
-
-    let footer_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(chunks[2]);
-
-    frame.render_widget(mode_footer, footer_chunks[0]);
-    frame.render_widget(key_notes_footer, footer_chunks[1]);
-
-    if let Some(editing) = &app.currently_editing {
-        let popup_block = Block::default()
-            .title("Enter a new key-value pair")
-            .borders(Borders::NONE)
-            .style(Style::default().bg(Color::DarkGray));
-
-        let area = centered_rect(60, 25, frame.area());
-        frame.render_widget(popup_block, area);
-
-        let popup_chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .margin(1)
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-            .split(area);
-
-                let mut key_block = Block::default().title("Key").borders(Borders::ALL);
-        let mut value_block = Block::default().title("Value").borders(Borders::ALL);
-
-        let active_style = Style::default().bg(Color::LightYellow).fg(Color::Black);
-
-        match editing {
-            CurrentlyEditing::Key => key_block = key_block.style(active_style),
-            CurrentlyEditing::Value => value_block = value_block.style(active_style),
-        };
-
-        let key_text = Paragraph::new(app.key_input.clone()).block(key_block);
-        frame.render_widget(key_text, popup_chunks[0]);
-
-        let value_text = Paragraph::new(app.value_input.clone()).block(value_block);
-        frame.render_widget(value_text, popup_chunks[1]);
-    }
-
-    if let CurrentScreen::Exiting = app.current_screen {
-        frame.render_widget(Clear, frame.area()); //this clears the entire screen and anything already drawn
-        let popup_block = Block::default()
-            .title("Y/N")
-            .borders(Borders::NONE)
-            .style(Style::default().bg(Color::DarkGray));
-
-        let exit_text = Text::styled(
-            "Would you like to output the buffer as json? (y/n)",
-            Style::default().fg(Color::Red),
-        );
-        // the `trim: false` will stop the text from being cut off when over the edge of the block
-        let exit_paragraph = Paragraph::new(exit_text)
-            .block(popup_block)
-            .wrap(Wrap { trim: false });
-
-        let area = centered_rect(60, 25, frame.area());
-        frame.render_widget(exit_paragraph, area);
+    match app.current_screen {
+        CurrentScreen::Chat => render_chat(frame, app),
+        CurrentScreen::Battleship => render_battleship(frame, app),
     }
 }
 
-fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
-    // Cut the given rectangle into three vertical pieces
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(r);
+fn render_chat(frame: &mut Frame, app: &App) {
+    let area = frame.area();
 
-    // Then cut the middle vertical piece into three width-wise pieces
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
+    let [title_area, messages_area, input_area, room_selector_area] = Layout::vertical([
+        Constraint::Length(5),
+        Constraint::Fill(1),
+        Constraint::Length(3),
+        Constraint::Length(3),
+    ])
+    .areas(area);
+
+    // Title banner
+    frame.render_widget(
+        Paragraph::new(TITLE).block(
+            Block::bordered()
+                .border_style(Style::default().fg(Color::Cyan)),
+        ),
+        title_area,
+    );
+
+    // Message history
+    frame.render_widget(
+        Block::bordered()
+            .title(" messages ")
+            .border_style(Style::default().fg(Color::DarkGray)),
+        messages_area,
+    );
+
+    // Input box
+    frame.render_widget(
+        Block::bordered()
+            .title(" type a message ")
+            .border_style(Style::default().fg(Color::Yellow)),
+        input_area,
+    );
+
+    // Room selector
+    render_room_selector(frame, app, room_selector_area);
+}
+
+fn render_room_selector(frame: &mut Frame, app: &App, area: Rect) {
+    let rooms = ["#general", "#battleship"];
+    let constraints: Vec<Constraint> = rooms
+        .iter()
+        .map(|_| Constraint::Fill(1))
+        .collect();
+
+    let cells = Layout::horizontal(constraints).split(area);
+
+    for (i, (room, cell)) in rooms.iter().zip(cells.iter()).enumerate() {
+        let is_active = i == app.selected_room;
+        let style = if is_active {
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+
+        frame.render_widget(
+            Paragraph::new(*room)
+                .style(style)
+                .block(Block::bordered()),
+            *cell,
+        );
+    }
+}
+
+fn render_battleship(frame: &mut Frame, app: &App) {
+    let area = frame.area();
+
+    let [grids_area, log_area, controls_area] = Layout::vertical([
+        Constraint::Fill(1),
+        Constraint::Length(10),
+        Constraint::Length(6),
+    ])
+    .areas(area);
+
+    let [your_stats_area, your_board_area, their_board_area, their_stats_area] =
+        Layout::horizontal([
+            Constraint::Fill(1),
+            Constraint::Fill(1),
+            Constraint::Fill(1),
+            Constraint::Fill(1),
         ])
-        .split(popup_layout[1])[1] // Return the middle chunk
+        .areas(grids_area);
+
+    // Your stats
+    frame.render_widget(
+        your_stats_widget(app)
+            .block(Block::bordered()
+                .title(" Your Stats ")
+                .border_style(Style::default().fg(Color::Green))),
+        your_stats_area,
+    );
+
+    // Your board
+    let your_title = if app.your_turn {
+        Line::from(vec![
+            Span::styled("[TURN] ", Style::default().fg(Color::Yellow)),
+            Span::raw("Your Board"),
+        ])
+    } else {
+        Line::from(" Your Board ")
+    };
+
+    frame.render_widget(
+        render_board(&app.your_board)
+            .block(Block::bordered()
+                .title(your_title)
+                .border_style(Style::default().fg(Color::Green))),
+        your_board_area,
+    );
+
+    // Opponent board
+    let opp_title = if !app.your_turn {
+        Line::from(vec![
+            Span::styled("[TURN] ", Style::default().fg(Color::Yellow)),
+            Span::raw("Opponent Board"),
+        ])
+    } else {
+        Line::from(" Opponent Board ")
+    };
+
+    frame.render_widget(
+        render_board(&app.their_board)
+            .block(Block::bordered()
+                .title(opp_title)
+                .border_style(Style::default().fg(Color::Red))),
+        their_board_area,
+    );
+
+    // Their stats
+    frame.render_widget(
+        their_stats_widget(app)
+            .block(Block::bordered()
+                .title(" Opp. Stats ")
+                .border_style(Style::default().fg(Color::Red))),
+        their_stats_area,
+    );
+
+    // Game log
+    frame.render_widget(
+        render_game_log(app)
+            .block(Block::bordered()
+                .title(" Game Log ")
+                .border_style(Style::default().fg(Color::DarkGray))),
+        log_area,
+    );
+
+    // Controls
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from("T: Toggle message input"),
+            Line::from("Q: Quit"),
+            Line::from("Arrow Keys: Change target position"),
+            Line::from("Enter: Submit/Fire"),
+        ])
+        .block(Block::bordered()
+            .title(" Controls ")
+            .border_style(Style::default().fg(Color::DarkGray))),
+        controls_area,
+    );
+}
+
+fn your_stats_widget(app: &App) -> Paragraph<'static> {
+    Paragraph::new(vec![
+        Line::from(Span::styled("Pieces", Style::default().add_modifier(Modifier::BOLD))),
+        Line::from(vec![
+            Span::styled("Carrier:     ", Style::default().fg(Color::DarkGray)),
+            Span::styled("5/5", Style::default().fg(Color::Green)),
+        ]),
+        Line::from(vec![
+            Span::styled("Battleship:  ", Style::default().fg(Color::DarkGray)),
+            Span::styled("4/4", Style::default().fg(Color::Green)),
+        ]),
+        Line::from(vec![
+            Span::styled("Destroyer:   ", Style::default().fg(Color::DarkGray)),
+            Span::styled("3/3", Style::default().fg(Color::Green)),
+        ]),
+        Line::from(vec![
+            Span::styled("Submarine:   ", Style::default().fg(Color::DarkGray)),
+            Span::styled("3/3", Style::default().fg(Color::Green)),
+        ]),
+        Line::from(vec![
+            Span::styled("Patrol Boat: ", Style::default().fg(Color::DarkGray)),
+            Span::styled("2/2", Style::default().fg(Color::Green)),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled("Total", Style::default().add_modifier(Modifier::BOLD))),
+        Line::from(vec![
+            Span::styled("HP: ", Style::default().fg(Color::DarkGray)),
+            Span::styled("17/17", Style::default().fg(Color::Green)),
+        ]),
+        Line::from(vec![
+            Span::styled("Shots: ", Style::default().fg(Color::DarkGray)),
+            Span::styled("0", Style::default().fg(Color::Blue)),
+        ]),
+        Line::from(vec![
+            Span::styled("Hits: ", Style::default().fg(Color::DarkGray)),
+            Span::styled("0", Style::default().fg(Color::Yellow)),
+        ]),
+    ])
+}
+
+fn their_stats_widget(app: &App) -> Paragraph<'static> {
+    Paragraph::new(vec![
+        Line::from(Span::styled("Pieces", Style::default().add_modifier(Modifier::BOLD))),
+        Line::from(Span::styled("???", Style::default().fg(Color::DarkGray))),
+        Line::from(Span::styled("???", Style::default().fg(Color::DarkGray))),
+        Line::from(Span::styled("???", Style::default().fg(Color::DarkGray))),
+        Line::from(Span::styled("???", Style::default().fg(Color::DarkGray))),
+        Line::from(Span::styled("???", Style::default().fg(Color::DarkGray))),
+        Line::from(""),
+        Line::from(Span::styled("Total", Style::default().add_modifier(Modifier::BOLD))),
+        Line::from(vec![
+            Span::styled("HP: ", Style::default().fg(Color::DarkGray)),
+            Span::styled("??/17", Style::default().fg(Color::DarkGray)),
+        ]),
+        Line::from(vec![
+            Span::styled("Shots: ", Style::default().fg(Color::DarkGray)),
+            Span::styled("0", Style::default().fg(Color::Blue)),
+        ]),
+        Line::from(vec![
+            Span::styled("Hits: ", Style::default().fg(Color::DarkGray)),
+            Span::styled("0", Style::default().fg(Color::Yellow)),
+        ]),
+    ])
+}
+
+fn render_game_log(app: &App) -> Paragraph<'static> {
+    Paragraph::new(vec![
+        Line::from(vec![
+            Span::styled("9:41", Style::default().fg(Color::DarkGray)),
+            Span::styled(" [Game]: ", Style::default().fg(Color::Yellow)),
+            Span::raw("Welcome to Battleship! Welcome to Battleship! Welcome to Battleship! Welcome to Battleship! Welcome to Battleship! Welcome to Battleship!"),
+        ]),
+
+        Line::from(vec![
+            Span::styled("9:42", Style::default().fg(Color::DarkGray)),
+            Span::styled(" <You>: ", Style::default().fg(Color::Green)),
+            Span::raw("Why hello there"),
+        ]),
+
+        Line::from(vec![
+            Span::styled("9:42", Style::default().fg(Color::DarkGray)),
+            Span::styled(" <Dark Passenger>: ", Style::default().fg(Color::Red)),
+            Span::raw("Whats up"),
+        ]),
+    ])
+}
+
+fn render_board(board: &[[Cell; 10]; 10]) -> Paragraph<'static> {
+    let mut lines: Vec<Line> = Vec::new();
+
+    // Header row: "   A B C D E F G H I J"
+    let header = Line::from(
+Span::styled("   A B C D E F G H I J", Style::default().fg(Color::DarkGray)),
+);
+    lines.push(header);
+
+    // Separator
+    let sep = Line::from(Span::styled("  +-+-+-+-+-+-+-+-+-+-+", Style::default().fg(Color::DarkGray)));
+
+    lines.push(sep.clone());
+
+    for row in 0..10 {
+        // Row number — use 0 for the 10th row to keep single digit
+        let row_label = if row == 9 { "0".to_string() } else { (row + 1).to_string() };
+
+        let mut spans = vec![
+            Span::styled(format!("{} ", row_label), Style::default().fg(Color::DarkGray)),
+            Span::styled("|", Style::default().fg(Color::DarkGray)),
+        ];
+
+        for col in 0..10 {
+            let (symbol, fg) = match board[row][col] {
+                Cell::Empty      => (" ", Color::Reset),
+                Cell::Hit        => ("x", Color::Yellow),
+                Cell::Miss       => ("~", Color::Blue),
+                Cell::Sunk       => ("x", Color::Red),
+                Cell::Carrier    => ("C", Color::Green),
+                Cell::Battleship => ("B", Color::Green),
+                Cell::Destroyer  => ("D", Color::Green),
+                Cell::Submarine  => ("S", Color::Green),
+                Cell::Patrol     => ("P", Color::Green),
+            };
+
+            spans.push(Span::styled(symbol, Style::default().fg(fg)));
+            spans.push(Span::styled("|", Style::default().fg(Color::DarkGray)));
+        }
+
+        lines.push(Line::from(spans));
+        lines.push(sep.clone());
+    }
+
+    Paragraph::new(lines)
 }
