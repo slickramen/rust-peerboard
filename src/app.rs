@@ -10,6 +10,7 @@ pub enum CurrentlyEditing {
     Key,
     Value,
 }
+
 pub struct App {
     pub key_input: String,              // the currently being edited json key.
     pub value_input: String,            // the currently being edited json value.
