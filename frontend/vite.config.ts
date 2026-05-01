@@ -12,6 +12,7 @@ export default defineConfig({
 				ws: true,
 				rewriteWsOrigin: true,
 			},
+			"/messages": "http://127.0.0.1:3000",
 		},
 	},
 });

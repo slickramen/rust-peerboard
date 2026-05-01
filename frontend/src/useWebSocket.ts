@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-const WS_URL = `ws://${window.location.host}/ws`;
+const WS_URL = `ws://localhost:3000/ws`;
 
 export interface ChatMessage {
 	peer_id: string;
@@ -14,12 +14,21 @@ export interface ChatMessage {
 interface UseWebSocketReturn {
 	messages: ChatMessage[];
 	connected: boolean;
+	send: (content: string) => void;
 }
 
 export function useWebSocket(): UseWebSocketReturn {
 	const ws = useRef<WebSocket | null>(null);
 	const [messages, setMessages] = useState<ChatMessage[]>([]);
 	const [connected, setConnected] = useState(false);
+
+	const send = useCallback((content: string) => {
+		if (ws.current?.readyState === WebSocket.OPEN) {
+			ws.current.send(JSON.stringify({ content }));
+		} else {
+			console.warn("WebSocket not connected");
+		}
+	}, []);
 
 	useEffect(() => {
 		function connect() {
@@ -31,7 +40,13 @@ export function useWebSocket(): UseWebSocketReturn {
 			socket.onmessage = (event: MessageEvent) => {
 				try {
 					const msg: ChatMessage = JSON.parse(event.data);
-					setMessages((prev) => [...prev, msg]);
+
+					setMessages((prev) => {
+						if (prev.some((m) => m.message_id === msg.message_id)) {
+							return prev;
+						}
+						return [...prev, msg];
+					});
 				} catch (e) {
 					console.error("Failed to parse message:", e);
 				}
@@ -52,5 +67,5 @@ export function useWebSocket(): UseWebSocketReturn {
 		return () => ws.current?.close();
 	}, []);
 
-	return { messages, connected };
+	return { messages, connected, send };
 }

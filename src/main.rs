@@ -7,6 +7,8 @@ use axum::{
     response::IntoResponse,
     routing::get,
     Router,
+    routing::post, 
+    Json,
     http::HeaderValue,
 };
 use tower_http::cors::{Any, CorsLayer};
@@ -31,12 +33,24 @@ struct ChatBehaviour {
     identify: identify::Behaviour,
 }
 
-fn encode_message(
+use serde::Serialize;
+
+#[derive(Serialize)]
+struct ChatMessageDto {
+    peer_id: String,
+    nickname: String,
+    content: String,
+    timestamp: i64,
+    message_id: String,
+    topic: String,
+}
+
+fn build_message(
     peer_id: &PeerId,
     topic: &str,
     content: &str,
     nickname: &str,
-) -> Result<Vec<u8>, Box<dyn Error>> {
+) -> Result<(PeerBoardMessage, Vec<u8>), Box<dyn Error>> {
     if content.len() > 4096 {
         return Err("content exceeds 4096 bytes".into());
     }
@@ -55,7 +69,8 @@ fn encode_message(
 
     let mut buf = Vec::with_capacity(msg.encoded_len());
     msg.encode(&mut buf)?;
-    Ok(buf)
+
+    Ok((msg, buf))
 }
 
 fn decode_message(data: &[u8]) -> Result<PeerBoardMessage, prost::DecodeError> {
@@ -141,6 +156,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     swarm.behaviour_mut().kad.bootstrap()?;
     swarm.behaviour_mut().kad.get_closest_peers(peer_id);
 
+    let (to_swarm_tx, mut to_swarm_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+
     // ── Axum WebSocket server ──────────────────────────────────────────────
     let (broadcast_tx, _) = broadcast::channel::<String>(256);
     let broadcast_tx2 = broadcast_tx.clone();
@@ -149,18 +166,39 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let app = Router::new()
             .route("/ws", get(move |ws: WebSocketUpgrade| {
                 let tx = broadcast_tx2.clone();
+                let to_swarm = to_swarm_tx.clone();
+
                 async move {
                     ws.on_upgrade(move |socket: WebSocket| async move {
                         let mut rx = tx.subscribe();
-                        let (mut sender, _): (futures::stream::SplitSink<WebSocket, Message>, _) = socket.split();
-                        while let Ok(msg) = rx.recv().await {
-                            if sender.send(Message::Text(msg.into())).await.is_err() {
-                                break;
+                        let (mut sender, mut receiver) = socket.split();
+
+                        let send_task = tokio::spawn(async move {
+                            while let Ok(msg) = rx.recv().await {
+                                if sender.send(Message::Text(msg)).await.is_err() {
+                                    break;
+                                }
                             }
+                        });
+
+                        let recv_task = tokio::spawn(async move {
+                            while let Some(Ok(Message::Text(text))) = receiver.next().await {
+                                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                                    if let Some(content) = v.get("content").and_then(|c| c.as_str()) {
+                                        let _ = to_swarm.send(content.to_string());
+                                    }
+                                }
+                            }
+                        });
+
+                        tokio::select! {
+                            _ = send_task => {},
+                            _ = recv_task => {},
                         }
                     })
                 }
-            })).layer(
+            }))
+            .layer(
                 CorsLayer::new()
                     .allow_origin(Any)
                     .allow_methods(Any)
@@ -181,24 +219,31 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     loop {
         select! {
-            line = stdin.next_line() => {
-                let line = line?.unwrap_or_default();
-                if line.is_empty() { continue; }
-
-                match encode_message(&peer_id, topic.hash().as_str(), &line, &nickname) {
-                    Ok(payload) => {
-                        if let Err(e) = swarm.behaviour_mut().gossipsub.publish(topic.clone(), payload) {
-                            let all = swarm.behaviour().gossipsub.all_peers().count();
-                            let mesh = swarm.behaviour().gossipsub.mesh_peers(&topic.hash()).count();
-                            println!("Publish error: {e:?} | all_peers={all} mesh_peers={mesh}");
-                        }
-                    }
-                    Err(e) => println!("Encode error: {e}"),
-                }
-            }
-
             _ = bootstrap_timer.tick() => {
                 let _ = swarm.behaviour_mut().kad.bootstrap();
+            }
+
+            Some(content) = to_swarm_rx.recv() => {
+                match build_message(&peer_id, topic.hash().as_str(), &content, &nickname) {
+                    Ok((msg, payload)) => {
+                        if let Err(e) = swarm.behaviour_mut().gossipsub.publish(topic.clone(), payload) {
+                            eprintln!("Publish error: {e:?}");
+                        }
+
+                        let dto = ChatMessageDto {
+                            peer_id: msg.peer_id,
+                            nickname: msg.nickname,
+                            content: msg.content,
+                            timestamp: msg.timestamp,
+                            message_id: msg.message_id,
+                            topic: msg.topic,
+                        };
+
+                        let json = serde_json::to_string(&dto).unwrap();
+                        let _ = broadcast_tx.send(json);
+                    }
+                    Err(e) => eprintln!("Encode error: {e}"),
+                }
             }
 
             event = swarm.select_next_some() => match event {

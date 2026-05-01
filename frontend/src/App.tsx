@@ -6,7 +6,7 @@ function formatTime(timestamp: number): string {
 }
 
 export default function App() {
-	const { messages, connected } = useWebSocket();
+	const { messages, connected, send } = useWebSocket();
 	const [input, setInput] = useState("");
 	const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -16,7 +16,9 @@ export default function App() {
 
 	function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
 		e.preventDefault();
-		// sending not yet wired up on the Rust side
+		if (!input.trim()) return;
+		send(input);
+		setInput("");
 	}
 
 	return (
