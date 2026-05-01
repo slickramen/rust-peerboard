@@ -12,14 +12,20 @@ function formatTime(timestamp: number): string {
 }
 
 export default function App() {
-	const [username, setUsername] = useState("anon");
-	const [avatar, setAvatar] = useState(1);
 	const [input, setInput] = useState("");
 
-	const { messages, connected, send } = useWebSocket((init) => {
-		setUsername(init.username);
-		setAvatar(getAvatar(init.user_id));
-	});
+	const {
+		messages,
+		connected,
+		localUser,
+		send,
+		// subscribe,
+		// unsubscribe,
+		// subscribedTopics,
+	} = useWebSocket();
+
+	const username = localUser?.username ?? "anon";
+	const avatar = localUser ? getAvatar(localUser.user_id) : 1;
 
 	const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -59,7 +65,11 @@ export default function App() {
 			/>
 
 			<div className="page-body">
-				<Sidebar />
+				<Sidebar
+				// subscribedTopics={subscribedTopics}
+				// onSubscribe={subscribe}
+				// onUnsubscribe={unsubscribe}
+				/>
 
 				<div className="channel-body">
 					<div className="message-list">
@@ -68,7 +78,7 @@ export default function App() {
 								<div className="avatar">
 									<img
 										src={`/icons/${group.avatar_id}.png`}
-									></img>
+									/>
 								</div>
 
 								<div className="text-content">

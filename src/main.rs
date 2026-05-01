@@ -24,7 +24,9 @@ use std::{error::Error, time::Duration};
 use tokio::{io, select, sync::broadcast, time};
 use chrono::Utc;
 use uuid::Uuid;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use gossipsub::IdentTopic;
 
 #[derive(NetworkBehaviour)]
 struct ChatBehaviour {
@@ -33,21 +35,30 @@ struct ChatBehaviour {
     identify: identify::Behaviour,
 }
 
-#[derive(Serialize)]
-#[serde(tag = "type")]
-enum WsMessage {
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum ClientCommand {
     Init {
         user_id: String,
         username: String,
     },
     Chat {
-        peer_id: String,
-        nickname: String,
-        content: String,
-        timestamp: i64,
-        message_id: String,
         topic: String,
+        content: String,
+        #[serde(default)]
+        peer_id: Option<String>,
+        #[serde(default)]
+        nickname: Option<String>,
+        #[serde(default)]
+        timestamp: Option<i64>,
+        #[serde(default)]
+        message_id: Option<String>,
     },
+    Subscribe { topic: String },
+    Unsubscribed { topic: String },
+    Unsubscribe { topic: String },
+    Subscribed { topic: String },
+    Error { message: String },
 }
 
 fn build_message(
@@ -80,6 +91,12 @@ fn build_message(
 
 fn decode_message(data: &[u8]) -> Result<PeerBoardMessage, prost::DecodeError> {
     PeerBoardMessage::decode(data)
+}
+
+fn send_ws(tx: &broadcast::Sender<String>, msg: ClientCommand) {
+    if let Ok(json) = serde_json::to_string(&msg) {
+        let _ = tx.send(json);
+    }
 }
 
 #[tokio::main]
@@ -145,6 +162,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let topic = gossipsub::IdentTopic::new("peerboard/v1/general");
     swarm.behaviour_mut().gossipsub.subscribe(&topic)?;
 
+    let mut active_topics: HashMap<String, IdentTopic> = HashMap::new();
+    active_topics.insert("general".to_string(), topic.clone());
+
     let bootstrap_peer_id: PeerId = "12D3KooWCvwqT3JUzVQczCvAVFa9EGzNqjHHSMVHVhm3RVyscCNY".parse()?;
     let addrs = vec![
         "/ip4/170.64.177.57/tcp/8000".parse::<Multiaddr>()?,
@@ -161,7 +181,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     swarm.behaviour_mut().kad.bootstrap()?;
     swarm.behaviour_mut().kad.get_closest_peers(peer_id);
 
-    let (to_swarm_tx, mut to_swarm_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let (to_swarm_tx, mut to_swarm_rx) =
+        tokio::sync::mpsc::unbounded_channel::<ClientCommand>();
 
     let (broadcast_tx, _) = broadcast::channel::<String>(256);
     let broadcast_tx2 = broadcast_tx.clone();
@@ -170,20 +191,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let app = Router::new()
             .route("/ws", get(move |ws: WebSocketUpgrade| {
                 let tx = broadcast_tx2.clone();
-                let to_swarm = to_swarm_tx.clone();
+                let to_swarm = to_swarm_tx.clone(); // clone here per-connection
 
                 async move {
                     ws.on_upgrade(move |socket: WebSocket| async move {
                         let mut rx = tx.subscribe();
                         let (mut sender, mut receiver) = socket.split();
 
-                        let init = WsMessage::Init {
+                        let init = ClientCommand::Init {
                             user_id: peer_id.to_string(),
                             username: nickname.to_string(),
                         };
 
                         if let Ok(json) = serde_json::to_string(&init) {
-                            let _ = sender.send(Message::Text(json)).await;
+                            let _ = sender.send(Message::Text(json.into())).await;
                         }
 
                         let send_task = tokio::spawn(async move {
@@ -196,10 +217,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
                         let recv_task = tokio::spawn(async move {
                             while let Some(Ok(Message::Text(text))) = receiver.next().await {
-                                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
-                                    if let Some(content) = v.get("content").and_then(|c| c.as_str()) {
-                                        let _ = to_swarm.send(content.to_string());
+                                println!("WS recv: {text}"); // add this
+                                match serde_json::from_str::<ClientCommand>(&text) {
+                                    Ok(cmd) => { 
+                                        println!("Deserialized: {cmd:?}");
+                                        let _ = to_swarm.send(cmd); 
                                     }
+                                    Err(e) => eprintln!("Deserialize error: {e}"),
                                 }
                             }
                         });
@@ -234,31 +258,56 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 let _ = swarm.behaviour_mut().kad.bootstrap();
             }
 
-            Some(content) = to_swarm_rx.recv() => {
-                match build_message(&peer_id, topic.hash().as_str(), &content, &nickname) {
-                    Ok((msg, payload)) => {
-                        if let Err(e) = swarm.behaviour_mut().gossipsub.publish(topic.clone(), payload) {
-                            eprintln!("Publish error: {e:?}");
+            Some(cmd) = to_swarm_rx.recv() => {
+                println!("{:?}", cmd);
+
+                match cmd {
+                    ClientCommand::Subscribe { topic: name } => {
+                        if !active_topics.contains_key(&name) {
+                            let t = gossipsub::IdentTopic::new(format!("peerboard/v1/{name}"));
+                            if swarm.behaviour_mut().gossipsub.subscribe(&t).is_ok() {
+                                active_topics.insert(name, t);
+                            }
                         }
-
-                        let ws_msg = WsMessage::Chat {
-                            peer_id: msg.peer_id.clone(),
-                            nickname: msg.nickname.clone(),
-                            content: msg.content.clone(),
-                            timestamp: msg.timestamp,
-                            message_id: msg.message_id,
-                            topic: msg.topic,
-                        };
-
-                        println!(
-                            "\x1b[32m[{}]\x1b[0m ({}): {}",
-                            msg.nickname, msg.peer_id, msg.content
-                        );
-
-                        let json = serde_json::to_string(&ws_msg).unwrap();
-                        let _ = broadcast_tx.send(json);
                     }
-                    Err(e) => eprintln!("Encode error: {e}"),
+
+                    ClientCommand::Unsubscribe { topic: name } => {
+                        if let Some(t) = active_topics.remove(&name) {
+                            let _ = swarm.behaviour_mut().gossipsub.unsubscribe(&t);
+                        }
+                    }
+
+                    ClientCommand::Chat { topic, content, .. } => {
+                        let t = active_topics.get(&topic).cloned()
+                            .unwrap_or_else(|| gossipsub::IdentTopic::new(format!("peerboard/v1/{topic}")));
+
+                        match build_message(&peer_id, t.hash().as_str(), &content, nickname) {
+                            Ok((msg, payload)) => {
+                                if let Err(e) = swarm.behaviour_mut().gossipsub.publish(t, payload) {
+                                    eprintln!("Publish error: {e:?}");
+                                }
+
+                                let ws_msg = ClientCommand::Chat {
+                                    peer_id: Some(msg.peer_id.clone()),
+                                    nickname: Some(msg.nickname.clone()),
+                                    content: msg.content.clone(),
+                                    timestamp: Some(msg.timestamp),
+                                    message_id: Some(msg.message_id.clone()),
+                                    topic: msg.topic.clone(),
+                                };
+
+                                println!(
+                                    "\x1b[32m[{}]\x1b[0m ({}): {}",
+                                    msg.nickname, msg.peer_id, msg.content
+                                );
+
+                                send_ws(&broadcast_tx, ws_msg);
+                            }
+                            Err(e) => eprintln!("Encode error: {e}"),
+                        }
+                    }
+
+                    _ => {}
                 }
             }
 
