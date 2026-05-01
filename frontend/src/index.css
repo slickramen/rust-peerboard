@@ -13,6 +13,7 @@ html {
 
 :root {
 	--background-colour: #ccc;
+	--outline-colour: #ccc;
 	--message-channel-colour: #fff;
 	--channel-icon-colour: #00b3ff;
 	--surface-hover-colour: #e7e7e7;
@@ -24,4 +25,9 @@ html {
 	min-height: 100vh;
 	flex: 1;
 	background-color: var(--background-colour);
+}
+
+input {
+	border: 1px solid var(--outline-colour);
+	outline: none;
 }
