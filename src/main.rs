@@ -231,13 +231,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         }
 
                         let dto = ChatMessageDto {
-                            peer_id: msg.peer_id,
-                            nickname: msg.nickname,
-                            content: msg.content,
+                            peer_id: msg.peer_id.clone(),
+                            nickname: msg.nickname.clone(),
+                            content: msg.content.clone(),
                             timestamp: msg.timestamp,
                             message_id: msg.message_id,
                             topic: msg.topic,
                         };
+
+                        println!(
+                            "\x1b[32m[{}]\x1b[0m ({}): {}",
+                            msg.nickname, msg.peer_id, msg.content
+                        );
 
                         let json = serde_json::to_string(&dto).unwrap();
                         let _ = broadcast_tx.send(json);

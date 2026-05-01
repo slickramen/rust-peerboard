@@ -1,0 +1,110 @@
+.app {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	height: 100vh;
+	overflow: hidden;
+}
+
+.page-body {
+	display: flex;
+	flex-direction: row;
+	flex: 1;
+	margin-bottom: 12px;
+	overflow: hidden;
+}
+
+.channel-body {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 12px;
+	flex: 1;
+
+	background-color: var(--message-channel-colour);
+
+	border-radius: 4px;
+}
+
+.message-list {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+
+	overflow-x: hidden;
+	overflow-y: auto;
+}
+
+.message-group {
+	display: flex;
+	gap: 10px;
+	margin-bottom: 12px;
+}
+
+.message-line,
+.group-title {
+	display: flex;
+	gap: 8px;
+	align-items: baseline;
+	justify-content: space-between;
+}
+
+.show-on-hover {
+	display: none;
+}
+
+.message-line:hover {
+	background-color: var(--surface-hover-colour);
+}
+
+.message-line:hover > .show-on-hover {
+	display: block;
+}
+
+.time {
+	font-size: 0.75rem;
+	opacity: 0.6;
+}
+
+.message {
+	padding: 8px 36px;
+	display: flex;
+	flex-direction: row;
+	gap: 8px;
+}
+
+.avatar {
+	width: 32px;
+	height: 32px;
+	background-color: var(--channel-icon-colour);
+	border-radius: 50%;
+}
+
+.text-content {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+}
+
+.message .meta {
+	display: flex;
+	flex-direction: row;
+	gap: 4px;
+	justify-content: space-between;
+}
+
+.input-area {
+	display: flex;
+	flex-direction: row;
+	gap: 4px;
+}
+
+.input-area input {
+	flex: 1;
+	padding: 12px;
+	border-radius: 4px;
+}
+
+.input-area .send-button {
+	padding: 8px 16px;
+}

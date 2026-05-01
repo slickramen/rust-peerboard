@@ -1,0 +1,27 @@
+@font-face {
+	font-family: "Inter";
+	src: url("../public/Inter.ttf") format("truetype");
+}
+
+body,
+html {
+	font-family: "Inter", Arial, Helvetica, sans-serif;
+	padding: 0;
+	height: 100%;
+	margin: 0;
+}
+
+:root {
+	--background-colour: #ccc;
+	--message-channel-colour: #fff;
+	--channel-icon-colour: #00b3ff;
+	--surface-hover-colour: #e7e7e7;
+}
+
+#root {
+	display: flex;
+	min-width: 100vw;
+	min-height: 100vh;
+	flex: 1;
+	background-color: var(--background-colour);
+}
