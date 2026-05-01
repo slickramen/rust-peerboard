@@ -4,14 +4,14 @@ pub mod peerboard {
 
 use axum::{
     extract::ws::{Message, WebSocket, WebSocketUpgrade},
-    response::IntoResponse,
     routing::get,
     Router,
-    routing::post, 
-    Json,
-    http::HeaderValue,
 };
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::{
+    cors::{Any, CorsLayer},
+    services::ServeDir,
+};
+
 use futures::{SinkExt, StreamExt};
 use libp2p::{
     gossipsub, identity, kad, noise,
@@ -22,7 +22,7 @@ use libp2p::identify;
 use peerboard::PeerBoardMessage;
 use prost::Message as ProstMessage;
 use std::{error::Error, time::Duration};
-use tokio::{io, io::AsyncBufReadExt, io::AsyncWriteExt, select, sync::broadcast, time};
+use tokio::{io, io::AsyncBufReadExt, select, sync::broadcast, time};
 use chrono::Utc;
 use uuid::Uuid;
 
@@ -158,7 +158,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let (to_swarm_tx, mut to_swarm_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
 
-    // ── Axum WebSocket server ──────────────────────────────────────────────
     let (broadcast_tx, _) = broadcast::channel::<String>(256);
     let broadcast_tx2 = broadcast_tx.clone();
 
@@ -210,9 +209,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         println!("API server listening on http://127.0.0.1:{port}");
         axum::serve(listener, app).await.unwrap();
     });
-    // ──────────────────────────────────────────────────────────────────────
 
-    let mut stdin = io::BufReader::new(io::stdin()).lines();
     let mut bootstrap_timer = time::interval(Duration::from_secs(30));
 
     println!("--- Node Ready ---");
