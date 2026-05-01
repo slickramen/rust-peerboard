@@ -1,4 +1,4 @@
-import hashString from "./hashString";
+import getAvatar from "./hashString";
 import type { ChatMessage, MessageGroup } from "./types";
 
 export function groupMessages(messages: ChatMessage[]): MessageGroup[] {
@@ -8,7 +8,7 @@ export function groupMessages(messages: ChatMessage[]): MessageGroup[] {
 		if (lastGroup && lastGroup.peer_id === msg.peer_id) {
 			lastGroup.messages.push(msg);
 		} else {
-			const avatar_number = (hashString(msg.peer_id) % 20) + 1;
+			const avatar_number = getAvatar(msg.peer_id);
 
 			groups.push({
 				nickname: msg.nickname,

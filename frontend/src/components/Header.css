@@ -4,3 +4,9 @@
 	display: flex;
 	justify-content: space-between;
 }
+
+.avatar-wrapper {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+}

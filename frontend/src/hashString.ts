@@ -9,4 +9,8 @@ function hashString(str: string): number {
 	return Math.abs(hash);
 }
 
-export default hashString;
+function getAvatar(peerId: string) {
+	return (hashString(peerId) % 20) + 1;
+}
+
+export default getAvatar;

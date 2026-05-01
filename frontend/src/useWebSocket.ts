@@ -15,9 +15,11 @@ interface UseWebSocketReturn {
 	messages: ChatMessage[];
 	connected: boolean;
 	send: (content: string) => void;
+	onInit?: (data: { user_id: string; username: string }) => void;
 }
 
-export function useWebSocket(): UseWebSocketReturn {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function useWebSocket(onInit?: (data: any) => void): UseWebSocketReturn {
 	const ws = useRef<WebSocket | null>(null);
 	const [messages, setMessages] = useState<ChatMessage[]>([]);
 	const [connected, setConnected] = useState(false);
@@ -37,18 +39,32 @@ export function useWebSocket(): UseWebSocketReturn {
 
 			socket.onopen = () => setConnected(true);
 
-			socket.onmessage = (event: MessageEvent) => {
-				try {
-					const msg: ChatMessage = JSON.parse(event.data);
+			socket.onmessage = (event) => {
+				const msg = JSON.parse(event.data);
 
-					setMessages((prev) => {
-						if (prev.some((m) => m.message_id === msg.message_id)) {
-							return prev;
-						}
-						return [...prev, msg];
-					});
-				} catch (e) {
-					console.error("Failed to parse message:", e);
+				console.log(msg.type);
+
+				switch (msg.type) {
+					case "Init":
+						console.log("Connected as:", msg.username, msg.user_id);
+						onInit?.({
+							user_id: msg.user_id,
+							username: msg.username,
+						});
+						break;
+
+					default:
+						setMessages((prev) => {
+							if (
+								prev.some(
+									(m) => m.message_id === msg.message_id,
+								)
+							) {
+								return prev;
+							}
+							return [...prev, msg];
+						});
+						break;
 				}
 			};
 
