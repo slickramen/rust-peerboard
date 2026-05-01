@@ -47,7 +47,11 @@ export default function App() {
 					<div className="message-list">
 						{groupedMessages.map((group, i) => (
 							<div key={i} className="message-group">
-								<div className="avatar" />
+								<div className="avatar">
+									<img
+										src={`/icons/${group.avatar_id}.png`}
+									></img>
+								</div>
 
 								<div className="text-content">
 									<div className="group-title">
