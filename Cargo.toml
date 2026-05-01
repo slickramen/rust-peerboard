@@ -4,18 +4,19 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-tokio = { version = "1", features = ["full"] }
-
-libp2p = { version = "0.53", features = [
-    "tcp",
-    "quic",
-    "dns",
-    "noise",
-    "yamux",
-    "kad",
-    "gossipsub",
-    "macros",
-    "tokio"
-] }
-
+axum = { version = "0.7", features = ["ws"] }
+chrono = "0.4"
 futures = "0.3"
+libp2p = { version = "0.54", features = [
+    "tokio", "tcp", "quic", "noise", "yamux",
+    "gossipsub", "kad", "identify", "macros",
+] }
+prost = "0.13"
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+uuid = { version = "1", features = ["v4"] }
+tower-http = { version = "0.5", features = ["cors"] }
+
+[build-dependencies]
+prost-build = "0.13"
+protox = "0.7"
