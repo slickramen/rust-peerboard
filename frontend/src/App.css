@@ -50,7 +50,7 @@
 }
 
 .show-on-hover {
-	display: none;
+	visibility: hidden;
 }
 
 .message-line:hover {
@@ -58,7 +58,7 @@
 }
 
 .message-line:hover > .show-on-hover {
-	display: block;
+	visibility: visible;
 }
 
 .time {
@@ -71,6 +71,12 @@
 	display: flex;
 	flex-direction: row;
 	gap: 8px;
+}
+
+.message-line .content {
+	word-wrap: break-word;
+	word-break: break-all;
+	hyphens: auto;
 }
 
 .avatar {
