@@ -9,7 +9,6 @@ use axum::{
 };
 use tower_http::{
     cors::{Any, CorsLayer},
-    services::ServeDir,
 };
 
 use futures::{SinkExt, StreamExt};
@@ -22,9 +21,10 @@ use libp2p::identify;
 use peerboard::PeerBoardMessage;
 use prost::Message as ProstMessage;
 use std::{error::Error, time::Duration};
-use tokio::{io, io::AsyncBufReadExt, select, sync::broadcast, time};
+use tokio::{io, select, sync::broadcast, time};
 use chrono::Utc;
 use uuid::Uuid;
+use serde::Serialize;
 
 #[derive(NetworkBehaviour)]
 struct ChatBehaviour {
@@ -33,16 +33,21 @@ struct ChatBehaviour {
     identify: identify::Behaviour,
 }
 
-use serde::Serialize;
-
 #[derive(Serialize)]
-struct ChatMessageDto {
-    peer_id: String,
-    nickname: String,
-    content: String,
-    timestamp: i64,
-    message_id: String,
-    topic: String,
+#[serde(tag = "type")]
+enum WsMessage {
+    Init {
+        user_id: String,
+        username: String,
+    },
+    Chat {
+        peer_id: String,
+        nickname: String,
+        content: String,
+        timestamp: i64,
+        message_id: String,
+        topic: String,
+    },
 }
 
 fn build_message(
@@ -172,6 +177,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         let mut rx = tx.subscribe();
                         let (mut sender, mut receiver) = socket.split();
 
+                        let init = WsMessage::Init {
+                            user_id: peer_id.to_string(),
+                            username: nickname.to_string(),
+                        };
+
+                        if let Ok(json) = serde_json::to_string(&init) {
+                            let _ = sender.send(Message::Text(json)).await;
+                        }
+
                         let send_task = tokio::spawn(async move {
                             while let Ok(msg) = rx.recv().await {
                                 if sender.send(Message::Text(msg)).await.is_err() {
@@ -227,7 +241,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                             eprintln!("Publish error: {e:?}");
                         }
 
-                        let dto = ChatMessageDto {
+                        let ws_msg = WsMessage::Chat {
                             peer_id: msg.peer_id.clone(),
                             nickname: msg.nickname.clone(),
                             content: msg.content.clone(),
@@ -241,7 +255,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                             msg.nickname, msg.peer_id, msg.content
                         );
 
-                        let json = serde_json::to_string(&dto).unwrap();
+                        let json = serde_json::to_string(&ws_msg).unwrap();
                         let _ = broadcast_tx.send(json);
                     }
                     Err(e) => eprintln!("Encode error: {e}"),

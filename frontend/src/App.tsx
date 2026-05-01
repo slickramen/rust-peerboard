@@ -5,17 +5,23 @@ import Header from "./components/Header";
 
 import "./App.css";
 import { groupMessages } from "./groupMsg";
+import getAvatar from "./hashString";
 
 function formatTime(timestamp: number): string {
 	return new Date(timestamp * 1000).toLocaleTimeString();
 }
 
 export default function App() {
-	const { messages, connected, send } = useWebSocket();
+	const [username, setUsername] = useState("anon");
+	const [avatar, setAvatar] = useState(1);
 	const [input, setInput] = useState("");
-	const bottomRef = useRef<HTMLDivElement>(null);
 
-	const username = "anon";
+	const { messages, connected, send } = useWebSocket((init) => {
+		setUsername(init.username);
+		setAvatar(getAvatar(init.user_id));
+	});
+
+	const bottomRef = useRef<HTMLDivElement>(null);
 
 	useEffect(() => {
 		bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -36,9 +42,21 @@ export default function App() {
 		[messages],
 	);
 
+	if (!connected) {
+		return (
+			<div className="app">
+				<div className="page-body">not connected!</div>
+			</div>
+		);
+	}
+
 	return (
 		<div className="app">
-			<Header connected={connected} username={username} />
+			<Header
+				connected={connected}
+				username={username}
+				avatar_id={avatar}
+			/>
 
 			<div className="page-body">
 				<Sidebar />
