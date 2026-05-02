@@ -13,15 +13,17 @@ function formatTime(timestamp: number): string {
 
 export default function App() {
 	const [input, setInput] = useState("");
+	const [activeTopic, setActiveTopic] = useState<string | null>("general");
+	const [seenCounts, setSeenCounts] = useState<Record<string, number>>({});
 
 	const {
 		messages,
 		connected,
 		localUser,
 		send,
-		// subscribe,
-		// unsubscribe,
-		// subscribedTopics,
+		subscribe,
+		unsubscribe,
+		subscribedTopics,
 	} = useWebSocket();
 
 	const username = localUser?.username ?? "anon";
@@ -35,18 +37,48 @@ export default function App() {
 
 	function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
 		e.preventDefault();
-		if (!input.trim()) return;
-		send(input);
+		if (!input.trim() || !activeTopic) return;
+
+		send(input, activeTopic);
 		setInput("");
 	}
 
 	const groupedMessages = useMemo(
 		() =>
 			groupMessages(
-				[...messages].sort((a, b) => a.timestamp - b.timestamp),
+				[...messages]
+					.filter((m) => m.topic === activeTopic)
+					.sort((a, b) => a.timestamp - b.timestamp),
 			),
-		[messages],
+		[messages, activeTopic],
 	);
+
+	const unreadTopics = useMemo(() => {
+		const unread = new Set<string>();
+		for (const topic of subscribedTopics) {
+			const count = messages.filter((m) => m.topic === topic).length;
+			const seen = seenCounts[topic] ?? 0;
+			if (topic !== activeTopic && count > seen) {
+				unread.add(topic);
+			}
+		}
+		return unread;
+	}, [messages, seenCounts, activeTopic, subscribedTopics]);
+
+	function handleTopicSelect(topic: string) {
+		setActiveTopic(topic);
+		setSeenCounts((prev) => ({
+			...prev,
+			[topic]: messages.filter((m) => m.topic === topic).length,
+			...(activeTopic
+				? {
+						[activeTopic]: messages.filter(
+							(m) => m.topic === activeTopic,
+						).length,
+					}
+				: {}),
+		}));
+	}
 
 	if (!connected) {
 		return (
@@ -66,9 +98,12 @@ export default function App() {
 
 			<div className="page-body">
 				<Sidebar
-				// subscribedTopics={subscribedTopics}
-				// onSubscribe={subscribe}
-				// onUnsubscribe={unsubscribe}
+					subscribedTopics={subscribedTopics}
+					onSubscribe={subscribe}
+					onUnsubscribe={unsubscribe}
+					activeTopic={activeTopic}
+					onTopicSelect={handleTopicSelect}
+					unreadTopics={unreadTopics}
 				/>
 
 				<div className="channel-body">
@@ -115,14 +150,20 @@ export default function App() {
 							type="text"
 							value={input}
 							onChange={(e) => setInput(e.target.value)}
-							placeholder="Type a message..."
+							placeholder={
+								activeTopic
+									? `Message #${activeTopic}...`
+									: "Select a channel..."
+							}
 							maxLength={4096}
-							disabled={!connected}
+							disabled={!connected || !activeTopic}
 						/>
 						<button
 							type="submit"
 							className="send-button"
-							disabled={!connected || !input.trim()}
+							disabled={
+								!connected || !input.trim() || !activeTopic
+							}
 						>
 							Send
 						</button>

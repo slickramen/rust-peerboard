@@ -1,5 +1,5 @@
 import getAvatar from "./hashString";
-import type { ChatMessage, MessageGroup } from "./types";
+import type { ChatMessage, MessageGroup } from "./types/types";
 
 export function groupMessages(messages: ChatMessage[]): MessageGroup[] {
 	return messages.reduce<MessageGroup[]>((groups, msg) => {

@@ -19,8 +19,10 @@ html {
 	--background-colour: #ccc;
 	--outline-colour: #ccc;
 	--message-channel-colour: #fff;
-	--channel-icon-colour: #00b3ff;
+	--channel-icon-colour: #ffff84;
+	--channel-icon-hover-colour: #f5e18f;
 	--surface-hover-colour: #e7e7e7;
+	--select-colour: #6da3ff;
 }
 
 #root {

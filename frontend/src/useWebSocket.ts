@@ -1,62 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type {
+	LocalUser,
+	ServerMessage,
+	ChatMessage,
+} from "./types/messageTypes";
 
 const WS_URL = `ws://localhost:3000/ws`;
-
-type WsMessageType =
-	| "init"
-	| "chat"
-	| "subscribe"
-	| "unsubscribe"
-	| "subscribed"
-	| "unsubscribed"
-	| "error";
-
-interface BaseMessage {
-	type: WsMessageType;
-}
-
-interface InitMessage extends BaseMessage {
-	type: "init";
-	user_id: string;
-	username: string;
-}
-
-interface ErrorMessage extends BaseMessage {
-	type: "error";
-	message: string;
-}
-
-interface SubscribedMessage extends BaseMessage {
-	type: "subscribed";
-	topic: string;
-}
-
-interface UnsubscribedMessage extends BaseMessage {
-	type: "unsubscribed";
-	topic: string;
-}
-
-export interface ChatMessage extends BaseMessage {
-	type: "chat";
-	peer_id: string;
-	nickname: string;
-	content: string;
-	timestamp: number;
-	message_id: string;
-	topic: string;
-}
-
-type ServerMessage =
-	| InitMessage
-	| ChatMessage
-	| SubscribedMessage
-	| UnsubscribedMessage
-	| ErrorMessage;
-
-export interface LocalUser {
-	user_id: string;
-	username: string;
-}
 
 interface UseWebSocketReturn {
 	messages: ChatMessage[];
@@ -120,14 +69,13 @@ export function useWebSocket(): UseWebSocketReturn {
 			socket.onmessage = (event) => {
 				const msg = JSON.parse(event.data) as ServerMessage;
 
-				console.log(msg);
-
 				switch (msg.type) {
 					case "init":
 						setLocalUser({
 							user_id: msg.user_id,
 							username: msg.username,
 						});
+						setSubscribedTopics(new Set(msg.topics));
 						break;
 
 					case "subscribed":

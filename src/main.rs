@@ -41,6 +41,7 @@ enum ClientCommand {
     Init {
         user_id: String,
         username: String,
+        topics: Vec<String>,
     },
     Chat {
         topic: String,
@@ -187,20 +188,24 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let (broadcast_tx, _) = broadcast::channel::<String>(256);
     let broadcast_tx2 = broadcast_tx.clone();
 
-    tokio::spawn(async move {
-        let app = Router::new()
-            .route("/ws", get(move |ws: WebSocketUpgrade| {
-                let tx = broadcast_tx2.clone();
-                let to_swarm = to_swarm_tx.clone(); // clone here per-connection
+    let initial_topics: Vec<String> = active_topics.keys().cloned().collect();
 
-                async move {
-                    ws.on_upgrade(move |socket: WebSocket| async move {
+    tokio::spawn(async move {
+    let app = Router::new()
+        .route("/ws", get(move |ws: WebSocketUpgrade| {
+            let tx = broadcast_tx2.clone();
+            let to_swarm = to_swarm_tx.clone();
+            let initial_topics = initial_topics.clone();
+
+            async move {
+                ws.on_upgrade(move |socket: WebSocket| async move {
                         let mut rx = tx.subscribe();
                         let (mut sender, mut receiver) = socket.split();
 
                         let init = ClientCommand::Init {
                             user_id: peer_id.to_string(),
                             username: nickname.to_string(),
+                            topics: initial_topics.clone(),
                         };
 
                         if let Ok(json) = serde_json::to_string(&init) {
@@ -265,8 +270,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     ClientCommand::Subscribe { topic: name } => {
                         if !active_topics.contains_key(&name) {
                             let t = gossipsub::IdentTopic::new(format!("peerboard/v1/{name}"));
-                            if swarm.behaviour_mut().gossipsub.subscribe(&t).is_ok() {
-                                active_topics.insert(name, t);
+                            match swarm.behaviour_mut().gossipsub.subscribe(&t) {
+                                Ok(_) => {
+                                    active_topics.insert(name.clone(), t);
+                                    send_ws(&broadcast_tx, ClientCommand::Subscribed { topic: name });
+                                }
+                                Err(e) => {
+                                    send_ws(&broadcast_tx, ClientCommand::Error {
+                                        message: format!("subscribe failed: {e}"),
+                                    });
+                                }
                             }
                         }
                     }
@@ -274,6 +287,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     ClientCommand::Unsubscribe { topic: name } => {
                         if let Some(t) = active_topics.remove(&name) {
                             let _ = swarm.behaviour_mut().gossipsub.unsubscribe(&t);
+                            send_ws(&broadcast_tx, ClientCommand::Unsubscribed { topic: name });
                         }
                     }
 
@@ -293,7 +307,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                     content: msg.content.clone(),
                                     timestamp: Some(msg.timestamp),
                                     message_id: Some(msg.message_id.clone()),
-                                    topic: msg.topic.clone(),
+                                    topic: topic.clone(),
                                 };
 
                                 println!(
