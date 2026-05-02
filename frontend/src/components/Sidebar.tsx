@@ -7,6 +7,7 @@ interface ChannelProps {
 	active?: boolean;
 	hasUnread?: boolean;
 	onClick?: () => void;
+	index?: number;
 }
 
 const Channel = ({
@@ -15,10 +16,11 @@ const Channel = ({
 	active = false,
 	hasUnread = false,
 	onClick,
+	index = 0,
 }: ChannelProps) => {
 	if (addBtn) {
 		return (
-			<div className="sidebar-channel add-btn" onClick={onClick}>
+			<div className="channel-name add-btn" onClick={onClick}>
 				+
 			</div>
 		);
@@ -26,17 +28,16 @@ const Channel = ({
 
 	if (!name) return null;
 
-	const displayName = name
-		.replace("peerboard/v1/", "")
-		.substring(0, 2)
-		.toLowerCase();
+	const displayName = name.replace("peerboard/v1/", "");
+
 	return (
 		<div
-			className={`sidebar-channel ${active ? "active" : ""}`}
+			className={`channel-name ${active ? "active" : ""}`}
 			onClick={onClick}
+			style={{ zIndex: index }}
 		>
-			{displayName}
 			{hasUnread && <span className="unread-dot" />}
+			{displayName}
 		</div>
 	);
 };
@@ -118,7 +119,7 @@ const SubscribeModal = ({
 	);
 };
 
-interface SidebarProps {
+interface ChannelSelectorProps {
 	subscribedTopics: Set<string>;
 	onSubscribe: (topic: string) => void;
 	onUnsubscribe: (topic: string) => void;
@@ -127,14 +128,14 @@ interface SidebarProps {
 	unreadTopics: Set<string>;
 }
 
-export const Sidebar = ({
+export const ChannelSelector = ({
 	subscribedTopics,
 	onSubscribe,
 	onUnsubscribe,
 	activeTopic,
 	onTopicSelect,
 	unreadTopics,
-}: SidebarProps) => {
+}: ChannelSelectorProps) => {
 	const [modalOpen, setModalOpen] = useState(false);
 
 	function handleSubscribe(topic: string) {
@@ -146,19 +147,20 @@ export const Sidebar = ({
 	}
 
 	return (
-		<div className="sidebar-base">
-			<div className="sidebar-stack">
-				{[...subscribedTopics].map((topic) => (
+		<div className="channel-header">
+			<div className="channel-header-tabs">
+				{[...subscribedTopics].map((topic, i) => (
 					<Channel
 						key={topic}
 						name={topic}
 						active={topic === activeTopic}
 						hasUnread={unreadTopics.has(topic)}
 						onClick={() => onTopicSelect(topic)}
+						index={subscribedTopics.size - i}
 					/>
 				))}
-				<Channel addBtn onClick={() => setModalOpen(true)} />
 			</div>
+			<Channel addBtn onClick={() => setModalOpen(true)} />
 
 			{modalOpen && (
 				<SubscribeModal
@@ -172,6 +174,6 @@ export const Sidebar = ({
 	);
 };
 
-export const RightSideBar = () => {
-	return <div className="sidebar-base right-side"></div>;
+export const Sidebar = () => {
+	return <div className="sidebar-base"></div>;
 };

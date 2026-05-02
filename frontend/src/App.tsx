@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useWebSocket } from "./useWebSocket";
-import { Sidebar, RightSideBar } from "./components/Sidebar";
+import { Sidebar, ChannelSelector } from "./components/Sidebar";
 import Header from "./components/Header";
 
 import "./App.css";
@@ -39,7 +39,7 @@ export default function App() {
 
 	useEffect(() => {
 		bottomRef.current?.scrollIntoView({ behavior: "instant" });
-	}, [messages]);
+	}, [messages, activeTopic]);
 
 	function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
 		e.preventDefault();
@@ -89,10 +89,17 @@ export default function App() {
 	if (!connected) {
 		return (
 			<div className="app">
-				<div className="page-body">not connected!</div>
+				<header className="header">
+					<span className={"status disconnected"}>
+						<div className="connection-orb" />
+						offline
+					</span>
+				</header>
 			</div>
 		);
 	}
+
+	const topicName = activeTopic?.replace("peerboard/v1/", "");
 
 	return (
 		<div className="app">
@@ -103,80 +110,95 @@ export default function App() {
 			/>
 
 			<div className="page-body">
-				<Sidebar
-					subscribedTopics={subscribedTopics}
-					onSubscribe={subscribe}
-					onUnsubscribe={unsubscribe}
-					activeTopic={activeTopic}
-					onTopicSelect={handleTopicSelect}
-					unreadTopics={unreadTopics}
-				/>
-
-				<div className="channel-body">
-					<div className="message-list">
-						{groupedMessages.map((group, i) => (
-							<div key={i} className="message-group">
-								<div className="avatar">
-									<img
-										src={`/icons/${group.avatar_id}.png`}
-									/>
-								</div>
-
-								<div className="text-content">
-									<div className="group-title">
-										<span className="meta">
-											<strong>{group.nickname}</strong>
-										</span>
-										<span className="time">
-											{formatTime(group.timestamp)}
-										</span>
+				<Sidebar />
+				<div className="channel-wrapper">
+					<ChannelSelector
+						subscribedTopics={subscribedTopics}
+						onSubscribe={subscribe}
+						onUnsubscribe={unsubscribe}
+						activeTopic={activeTopic}
+						onTopicSelect={handleTopicSelect}
+						unreadTopics={unreadTopics}
+					/>
+					<div className="channel-body">
+						<div className="message-list">
+							<div className="welcome-to-channel">
+								<span className="welcome-message">
+									Welcome to #{topicName}
+								</span>
+								<span className="welcome-message-subtitle">
+									This is the beginning of the channel.
+								</span>
+							</div>
+							{groupedMessages.length === 0 && (
+								<div>No messages yet.</div>
+							)}
+							{groupedMessages.map((group, i) => (
+								<div key={i} className="message-group">
+									<div className="avatar chat">
+										<img
+											src={`/icons/${group.avatar_id}.png`}
+										/>
 									</div>
 
-									{group.messages.map((msg) => (
-										<div
-											key={msg.message_id}
-											className="message-line"
-										>
-											<span className="content">
-												{msg.content}
+									<div className="text-content">
+										<div className="group-title">
+											<span className="meta">
+												<strong>
+													{group.nickname}
+												</strong>
 											</span>
-											<span className="time show-on-hover">
-												{formatTime(msg.timestamp)}
+											<span className="time">
+												{formatTime(group.timestamp)}
 											</span>
 										</div>
-									))}
-								</div>
-							</div>
-						))}
-						<div ref={bottomRef} />
-					</div>
 
-					<form className="input-area" onSubmit={handleSubmit}>
-						<input
-							type="text"
-							value={input}
-							onChange={(e) => setInput(e.target.value)}
-							placeholder={
-								activeTopic
-									? `Message #${activeTopic.replace("peerboard/v1/", "")}...`
-									: "Select a channel..."
-							}
-							maxLength={4096}
-							disabled={!connected || !activeTopic}
-						/>
-						<button
-							type="submit"
-							className="send-button"
-							disabled={
-								!connected || !input.trim() || !activeTopic
-							}
-						>
-							Send
-						</button>
-					</form>
+										{group.messages.map((msg) => (
+											<div
+												key={msg.message_id}
+												className="message-line"
+											>
+												<span className="content">
+													{msg.content}
+												</span>
+												<span className="time show-on-hover">
+													{formatTime(msg.timestamp)}
+												</span>
+											</div>
+										))}
+									</div>
+								</div>
+							))}
+							<div ref={bottomRef} />
+						</div>
+
+						<form className="input-area" onSubmit={handleSubmit}>
+							<input
+								type="text"
+								value={input}
+								onChange={(e) => setInput(e.target.value)}
+								placeholder={
+									activeTopic
+										? `Message #${topicName}...`
+										: "Select a channel..."
+								}
+								maxLength={4096}
+								disabled={!connected || !activeTopic}
+							/>
+							<button
+								type="submit"
+								className="send-button"
+								disabled={
+									!connected || !input.trim() || !activeTopic
+								}
+							>
+								Send
+							</button>
+						</form>
+					</div>
 				</div>
 
-				<RightSideBar />
+				<Sidebar />
 			</div>
 		</div>
 	);

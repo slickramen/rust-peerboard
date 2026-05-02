@@ -14,7 +14,8 @@ const Header = ({ connected, username, avatar_id }: HeaderProps) => {
 					connected ? "status connected" : "status disconnected"
 				}
 			>
-				{connected ? "connected" : "disconnected"}
+				<div className="connection-orb" />
+				{connected ? "online" : "offline"}
 			</span>
 
 			<div className="avatar-wrapper">

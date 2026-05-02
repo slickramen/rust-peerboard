@@ -1,12 +1,33 @@
 .header {
 	background-color: var(--background-colour);
-	padding: 12px;
+	padding: 8px 20px;
 	display: flex;
 	justify-content: space-between;
+	align-items: center;
 }
 
 .avatar-wrapper {
 	display: flex;
 	align-items: center;
-	gap: 4px;
+	gap: 12px;
+}
+
+.connection-orb {
+	width: 8px;
+	height: 8px;
+	border-radius: 8px;
+	background-color: var(--online-colour);
+}
+
+.disconnected .connection-orb {
+	background-color: var(--offline-colour);
+}
+
+.status {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 14px;
+
+	color: var(--text-secondary);
 }

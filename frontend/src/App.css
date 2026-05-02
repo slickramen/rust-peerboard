@@ -17,13 +17,24 @@
 .channel-body {
 	display: flex;
 	flex-direction: column;
-	gap: 8px;
 	padding: 12px;
+	padding-top: 20px;
 	flex: 1;
+	gap: 2px;
 
 	background-color: var(--message-channel-colour);
 
-	border-radius: 8px;
+	border-radius: 0 0 16px 16px;
+	position: relative;
+	overflow: hidden;
+
+	border: var(--border);
+}
+
+.channel-wrapper {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
 }
 
 .message-list {
@@ -63,7 +74,7 @@
 
 .time {
 	font-size: 0.75rem;
-	opacity: 0.6;
+	color: var(--text-muted);
 	min-width: fit-content;
 }
 
@@ -78,6 +89,7 @@
 	word-wrap: break-word;
 	word-break: break-all;
 	hyphens: auto;
+	color: var(--text-secondary);
 }
 
 .avatar {
@@ -97,6 +109,20 @@
 	display: flex;
 	flex-direction: column;
 	flex: 1;
+	padding: 8px;
+	border-radius: 8px;
+	background-color: var(--chat-bubble-colour);
+	position: relative;
+}
+
+.text-content::after {
+	content: "";
+	position: absolute;
+	top: 8px;
+	left: -6px;
+	border-style: solid;
+	border-width: 8px 8px 8px 0;
+	border-color: transparent var(--chat-bubble-colour) transparent transparent;
 }
 
 .message .meta {
@@ -114,10 +140,33 @@
 
 .input-area input {
 	flex: 1;
-	padding: 12px;
-	border-radius: 4px;
+	padding: 16px;
+	border-radius: 8px;
+	outline: none;
+	border: var(--border);
 }
 
 .input-area .send-button {
 	padding: 8px 16px;
+	display: none;
+}
+
+.welcome-to-channel {
+	display: flex;
+	flex-direction: column;
+}
+
+.welcome-message {
+	margin: 16px 0 0;
+	font-size: 20px;
+	font-weight: 600;
+	text-align: center;
+	color: var(--text-secondary);
+}
+.welcome-message-subtitle {
+	margin: 8px 0 32px 0;
+	font-size: 14px;
+	font-weight: 500;
+	text-align: center;
+	color: var(--text-muted);
 }

@@ -9,20 +9,35 @@ html {
 	padding: 0;
 	height: 100%;
 	margin: 0;
+
+	scrollbar-width: thin;
+	scrollbar-color: #888 #f1f1f1;
 }
 
 * {
 	font-family: "Inter", Arial, Helvetica, sans-serif;
+	box-sizing: border-box;
 }
 
 :root {
-	--background-colour: #ccc;
-	--outline-colour: #ccc;
-	--message-channel-colour: #fff;
-	--channel-icon-colour: #ffff84;
-	--channel-icon-hover-colour: #f5e18f;
-	--surface-hover-colour: #e7e7e7;
-	--select-colour: #6da3ff;
+	--background-colour: #eee;
+	--outline-colour: #e2e2de;
+	--message-channel-colour: #ffffff;
+	--channel-icon-colour: #ffffff;
+	--channel-icon-hover-colour: #f8f8f8;
+	--surface-hover-colour: #e5e5e5;
+	--select-colour: #ffffff;
+
+	--chat-bubble-colour: #f1f1f1;
+
+	--online-colour: #4caf6e;
+	--offline-colour: #e05c5c;
+
+	--text-primary: #111110;
+	--text-secondary: #6f6e69;
+	--text-muted: #a8a8a3;
+
+	--border: 1px solid var(--outline-colour);
 }
 
 #root {
@@ -36,4 +51,13 @@ html {
 input {
 	border: 1px solid var(--outline-colour);
 	outline: none;
+}
+
+input::placeholder {
+	color: var(--text-muted);
+}
+
+button {
+	border: none;
+	cursor: pointer;
 }

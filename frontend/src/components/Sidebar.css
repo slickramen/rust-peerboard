@@ -1,62 +1,72 @@
 .sidebar-base {
-	background-color: var(--background-colour);
-	padding: 12px;
-	padding-top: 6px;
-}
-
-.sidebar-base.right-side {
 	width: 12px;
-	padding: 0;
 }
 
-.sidebar-stack {
+.channel-header {
+	width: 100%;
+	background-color: var(--background-colour);
 	display: flex;
-	flex-direction: column;
-	gap: 8px;
+	flex-direction: row;
+	margin-bottom: -1px;
 }
 
-.sidebar-channel {
+.channel-header-tabs {
 	display: flex;
-	width: 40px;
-	height: 40px;
-	background-color: var(--channel-icon-colour);
-	border-radius: 8px;
+	flex-direction: row;
+	overflow-x: auto;
 
-	font-size: 16px;
+	scrollbar-width: none;
+	-ms-overflow-style: none;
+	overflow-y: scroll;
+
+	min-width: 0;
+}
+
+.channel-name {
+	background-color: var(--background-colour);
+	min-width: fit-content;
+	padding: 8px 16px;
+	border-radius: 8px 8px 0 0;
+	cursor: pointer;
+	z-index: 1;
+	position: relative;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 14px;
+
+	border: var(--border);
+	color: var(--text-secondary);
+}
+
+.channel-name.add-btn {
+	border: var(--border);
+	font-size: 18px;
+	padding: 0px;
+	line-height: 0;
+	width: 32px;
+	display: flex;
 	align-items: center;
 	justify-content: center;
-	overflow: hidden;
-	position: relative;
+	color: var(--text-secondary);
 }
 
-.sidebar-channel.active {
-	box-shadow: inset 0 0 0 3px var(--background-colour);
-	outline: 3px solid var(--select-colour);
+.channel-name.active {
+	background-color: var(--channel-icon-colour);
+	color: var(--text-primary);
+	border-bottom-color: transparent;
 }
 
-.sidebar-channel:hover {
-	cursor: pointer;
+.channel-name:hover {
 	background-color: var(--channel-icon-hover-colour);
+	color: var(--text-primary);
 }
 
 .unread-dot {
-	position: absolute;
-	top: 2px;
-	right: 2px;
 	width: 8px;
 	height: 8px;
 	border-radius: 50%;
-	background: #e53e3e;
-}
-
-.add-btn {
-	opacity: 0.5;
-	font-size: 1.25rem;
-	cursor: pointer;
-}
-
-.add-btn:hover {
-	opacity: 1;
+	background: var(--offline-colour);
 }
 
 .modal-overlay {
