@@ -71,6 +71,7 @@ export function useWebSocket(): UseWebSocketReturn {
 
 				switch (msg.type) {
 					case "init":
+						console.log("Init received:", msg);
 						setLocalUser({
 							user_id: msg.user_id,
 							username: msg.username,

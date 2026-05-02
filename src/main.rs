@@ -134,6 +134,9 @@ fn setup_db(conn: &Connection) -> Result<(), Box<dyn Error>> {
             topic       TEXT NOT NULL,
             timestamp   INTEGER NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS topics (
+            topic TEXT PRIMARY KEY
+        );
     ")?;
     Ok(())
 }
@@ -178,6 +181,24 @@ fn load_messages(conn: &Connection, topic: &str) -> Result<Vec<PeerBoardMessage>
     .collect();
 
     Ok(msgs)
+}
+
+fn store_topic(conn: &Connection, topic: &str) -> Result<(), Box<dyn Error>> {
+    conn.execute("INSERT OR IGNORE INTO topics (topic) VALUES (?1)", params![topic])?;
+    Ok(())
+}
+
+fn remove_topic(conn: &Connection, topic: &str) -> Result<(), Box<dyn Error>> {
+    conn.execute("DELETE FROM topics WHERE topic = ?1", params![topic])?;
+    Ok(())
+}
+
+fn load_topics(conn: &Connection) -> Result<Vec<String>, Box<dyn Error>> {
+    let mut stmt = conn.prepare("SELECT topic FROM topics")?;
+    let topics = stmt.query_map([], |row| row.get::<_, String>(0))?
+        .filter_map(|r| r.ok())
+        .collect();
+    Ok(topics)
 }
 
 #[tokio::main]
@@ -240,12 +261,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
     swarm.listen_on("/ip4/0.0.0.0/udp/0/quic-v1".parse()?)?;
 
-    let topic = gossipsub::IdentTopic::new("peerboard/v1/general");
-    swarm.behaviour_mut().gossipsub.subscribe(&topic)?;
-
-    let mut active_topics: HashMap<String, IdentTopic> = HashMap::new();
-    active_topics.insert("peerboard/v1/general".to_string(), topic.clone());
-
     let bootstrap_peer_id: PeerId = "12D3KooWCvwqT3JUzVQczCvAVFa9EGzNqjHHSMVHVhm3RVyscCNY".parse()?;
     let addrs = vec![
         "/ip4/170.64.177.57/tcp/8000".parse::<Multiaddr>()?,
@@ -267,11 +282,28 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let (broadcast_tx, _) = broadcast::channel::<String>(256);
     let broadcast_tx2 = broadcast_tx.clone();
-
-    let initial_topics: Vec<String> = active_topics.keys().cloned().collect();
     
     let db = Arc::new(Mutex::new(Connection::open("peerboard.db")?));
     setup_db(&db.lock().unwrap())?;
+
+    store_topic(&db.lock().unwrap(), "peerboard/v1/general")?;
+
+    let persisted_topics = load_topics(&db.lock().unwrap())?;
+    println!("Persisted topics from DB: {:?}", persisted_topics);
+
+    let active_topics: Arc<Mutex<HashMap<String, IdentTopic>>> = Arc::new(Mutex::new(HashMap::new()));
+
+    for t in &persisted_topics {
+        let ident = gossipsub::IdentTopic::new(t);
+        match swarm.behaviour_mut().gossipsub.subscribe(&ident) {
+            Ok(_) => {
+                active_topics.lock().unwrap().insert(t.clone(), ident);
+            }
+            Err(e) => eprintln!("Failed to resubscribe to {t}: {e}"),
+        }
+    }
+
+    let active_topics_ws = active_topics.clone();
 
     let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
     {
@@ -292,20 +324,22 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .route("/ws", get(move |ws: WebSocketUpgrade| {
             let tx = broadcast_tx2.clone();
             let to_swarm = to_swarm_tx.clone();
-            let initial_topics = initial_topics.clone();
             let db = db_ws.clone();
+            let active_topics_ws = active_topics_ws.clone();
 
             async move {
                 ws.on_upgrade(move |socket: WebSocket| async move {
                     let mut rx = tx.subscribe();
-                    let (mut sender, mut receiver) = socket.split();
+                    let (mut sender, mut receiver) = socket.split(); // add this
 
-                    // send init
+                    let initial_topics: Vec<String> = active_topics_ws.lock().unwrap().keys().cloned().collect();
+
                     let init = ClientCommand::Init {
                         user_id: peer_id.to_string(),
                         username: nickname.to_string(),
                         topics: initial_topics.clone(),
                     };
+
                     if let Ok(json) = serde_json::to_string(&init) {
                         let _ = sender.send(Message::Text(json.into())).await;
                     }
@@ -383,12 +417,27 @@ async fn main() -> Result<(), Box<dyn Error>> {
             Some(cmd) = to_swarm_rx.recv() => {
                 match cmd {
                     ClientCommand::Subscribe { topic: name } => {
-                        if !active_topics.contains_key(&name) {
+                        if !active_topics.lock().unwrap().contains_key(&name) {
                             let t = gossipsub::IdentTopic::new(&name);
                             match swarm.behaviour_mut().gossipsub.subscribe(&t) {
                                 Ok(_) => {
-                                    active_topics.insert(name.clone(), t);
-                                    send_ws(&broadcast_tx, ClientCommand::Subscribed { topic: name });
+                                    store_topic(&db.lock().unwrap(), &name)?;
+                                    active_topics.lock().unwrap().insert(name.clone(), t);
+                                    send_ws(&broadcast_tx, ClientCommand::Subscribed { topic: name.clone() });
+
+                                    // replay stored messages for this topic
+                                    let msgs = load_messages(&db.lock().unwrap(), &name).unwrap_or_default();
+                                    for msg in msgs {
+                                        let ws_msg = ClientCommand::Chat {
+                                            peer_id: Some(msg.peer_id),
+                                            nickname: Some(msg.nickname),
+                                            content: msg.content,
+                                            timestamp: Some(msg.timestamp),
+                                            message_id: Some(msg.message_id),
+                                            topic: msg.topic,
+                                        };
+                                        send_ws(&broadcast_tx, ws_msg);
+                                    }
                                 }
                                 Err(e) => {
                                     send_ws(&broadcast_tx, ClientCommand::Error {
@@ -400,17 +449,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     }
 
                     ClientCommand::Unsubscribe { topic: name } => {
-                        if let Some(t) = active_topics.remove(&name) {
-                            let _ = swarm.behaviour_mut().gossipsub.unsubscribe(&t);
+                        if let Some(t) = active_topics.lock().unwrap().remove(&name) {
+                            swarm.behaviour_mut().gossipsub.unsubscribe(&t);
+                            remove_topic(&db.lock().unwrap(), &name)?;
                             send_ws(&broadcast_tx, ClientCommand::Unsubscribed { topic: name });
                         }
                     }
 
                     ClientCommand::Chat { topic, content, .. } => {
-                        let t = active_topics.get(&topic).cloned()
+                        let t = active_topics.lock().unwrap().get(&topic).cloned()
                             .unwrap_or_else(|| gossipsub::IdentTopic::new(&topic));
 
-                        match build_message(&peer_id, t.hash().as_str(), &content, nickname) {
+                        match build_message(&peer_id, &topic, &content, nickname) { 
                             Ok((msg, payload)) => {
                                 if let Err(e) = swarm.behaviour_mut().gossipsub.publish(t, payload) {
                                     eprintln!("Publish error: {e:?}");
