@@ -1,4 +1,4 @@
-use libp2p::{kad, gossipsub, Multiaddr, PeerId, swarm::dial_opts::DialOpts};
+use libp2p::{Multiaddr, PeerId};
 
 pub struct BootstrapNode {
     pub peer_id: PeerId,
