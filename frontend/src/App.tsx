@@ -8,7 +8,11 @@ import { groupMessages } from "./groupMsg";
 import getAvatar from "./hashString";
 
 function formatTime(timestamp: number): string {
-	return new Date(timestamp * 1000).toLocaleTimeString();
+	return new Date(timestamp * 1000).toLocaleTimeString([], {
+		hour: "numeric",
+		minute: "2-digit",
+		hour12: true,
+	});
 }
 
 export default function App() {
@@ -34,7 +38,7 @@ export default function App() {
 	const bottomRef = useRef<HTMLDivElement>(null);
 
 	useEffect(() => {
-		bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+		bottomRef.current?.scrollIntoView({ behavior: "instant" });
 	}, [messages]);
 
 	function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -154,7 +158,7 @@ export default function App() {
 							onChange={(e) => setInput(e.target.value)}
 							placeholder={
 								activeTopic
-									? `Message #${activeTopic}...`
+									? `Message #${activeTopic.replace("peerboard/v1/", "")}...`
 									: "Select a channel..."
 							}
 							maxLength={4096}

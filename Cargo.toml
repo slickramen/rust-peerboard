@@ -17,6 +17,7 @@ serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 uuid = { version = "1", features = ["v4"] }
 tower-http = { version = "0.5", features = ["cors"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
 
 [build-dependencies]
 prost-build = "0.13"

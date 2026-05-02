@@ -27,6 +27,8 @@ use uuid::Uuid;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use gossipsub::IdentTopic;
+use rusqlite::{Connection, params};
+use std::sync::{Arc, Mutex};
 
 #[derive(NetworkBehaviour)]
 struct ChatBehaviour {
@@ -68,18 +70,23 @@ fn build_message(
     content: &str,
     nickname: &str,
 ) -> Result<(PeerBoardMessage, Vec<u8>), Box<dyn Error>> {
-    if content.len() > 4096 {
+    if content.as_bytes().len() > 4096 {
         return Err("content exceeds 4096 bytes".into());
     }
-    if nickname.len() > 32 {
+    if nickname.as_bytes().len() > 32 {
         return Err("nickname exceeds 32 bytes".into());
     }
+    if !topic.starts_with("peerboard/v1/") {
+        return Err("topic does not begin with peerboard/v1/".into());
+    }
+
+    let timestamp = Utc::now().timestamp();
 
     let msg = PeerBoardMessage {
         peer_id: peer_id.to_string(),
         topic: topic.to_string(),
         content: content.to_string(),
-        timestamp: Utc::now().timestamp(),
+        timestamp,
         message_id: Uuid::new_v4().to_string(),
         nickname: nickname.to_string(),
     };
@@ -90,6 +97,23 @@ fn build_message(
     Ok((msg, buf))
 }
 
+fn validate_message(msg: &PeerBoardMessage) -> bool {
+    if msg.content.as_bytes().len() > 4096 {
+        return false;
+    }
+    if msg.nickname.as_bytes().len() > 32 {
+        return false;
+    }
+    if !msg.topic.starts_with("peerboard/v1/") {
+        return false;
+    }
+    let now = Utc::now().timestamp();
+    if msg.timestamp > now + 300 {
+        return false;
+    }
+    true
+}
+
 fn decode_message(data: &[u8]) -> Result<PeerBoardMessage, prost::DecodeError> {
     PeerBoardMessage::decode(data)
 }
@@ -98,6 +122,62 @@ fn send_ws(tx: &broadcast::Sender<String>, msg: ClientCommand) {
     if let Ok(json) = serde_json::to_string(&msg) {
         let _ = tx.send(json);
     }
+}
+
+fn setup_db(conn: &Connection) -> Result<(), Box<dyn Error>> {
+    conn.execute_batch("
+        CREATE TABLE IF NOT EXISTS messages (
+            message_id  TEXT PRIMARY KEY,
+            peer_id     TEXT NOT NULL,
+            nickname    TEXT NOT NULL,
+            content     TEXT NOT NULL,
+            topic       TEXT NOT NULL,
+            timestamp   INTEGER NOT NULL
+        );
+    ")?;
+    Ok(())
+}
+
+fn store_message(conn: &Connection, msg: &PeerBoardMessage) -> Result<bool, Box<dyn Error>> {
+    let rows = conn.execute(
+        "INSERT OR IGNORE INTO messages (message_id, peer_id, nickname, content, topic, timestamp)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![
+            msg.message_id,
+            msg.peer_id,
+            msg.nickname,
+            msg.content,
+            msg.topic,
+            msg.timestamp,
+        ],
+    )?;
+
+    // Check if duplicate
+    Ok(rows > 0)
+}
+
+fn load_messages(conn: &Connection, topic: &str) -> Result<Vec<PeerBoardMessage>, Box<dyn Error>> {
+    let mut stmt = conn.prepare(
+        "SELECT message_id, peer_id, nickname, content, topic, timestamp
+         FROM messages
+         WHERE topic = ?1
+         ORDER BY timestamp ASC"
+    )?;
+
+    let msgs = stmt.query_map(params![topic], |row| {
+        Ok(PeerBoardMessage {
+            message_id: row.get(0)?,
+            peer_id: row.get(1)?,
+            nickname: row.get(2)?,
+            content: row.get(3)?,
+            topic: row.get(4)?,
+            timestamp: row.get(5)?,
+        })
+    })?
+    .filter_map(|r| r.ok())
+    .collect();
+
+    Ok(msgs)
 }
 
 #[tokio::main]
@@ -118,7 +198,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     //     return Ok(());
     // }
 
-    let nickname = "anon";
+    let nickname = "martyn test";
 
     let mut swarm = libp2p::SwarmBuilder::with_existing_identity(key)
         .with_tokio()
@@ -189,6 +269,23 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let broadcast_tx2 = broadcast_tx.clone();
 
     let initial_topics: Vec<String> = active_topics.keys().cloned().collect();
+    
+    let db = Arc::new(Mutex::new(Connection::open("peerboard.db")?));
+    setup_db(&db.lock().unwrap())?;
+
+    let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    {
+        let conn = db.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT message_id FROM messages")?;
+        let ids = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        for id in ids {
+            seen_ids.insert(id?);
+        }
+    }
+
+    println!("Loaded {} message IDs from store", seen_ids.len());
+
+    let db_ws = db.clone();
 
     tokio::spawn(async move {
     let app = Router::new()
@@ -196,56 +293,76 @@ async fn main() -> Result<(), Box<dyn Error>> {
             let tx = broadcast_tx2.clone();
             let to_swarm = to_swarm_tx.clone();
             let initial_topics = initial_topics.clone();
+            let db = db_ws.clone();
 
             async move {
                 ws.on_upgrade(move |socket: WebSocket| async move {
-                        let mut rx = tx.subscribe();
-                        let (mut sender, mut receiver) = socket.split();
+                    let mut rx = tx.subscribe();
+                    let (mut sender, mut receiver) = socket.split();
 
-                        let init = ClientCommand::Init {
-                            user_id: peer_id.to_string(),
-                            username: nickname.to_string(),
-                            topics: initial_topics.clone(),
+                    // send init
+                    let init = ClientCommand::Init {
+                        user_id: peer_id.to_string(),
+                        username: nickname.to_string(),
+                        topics: initial_topics.clone(),
+                    };
+                    if let Ok(json) = serde_json::to_string(&init) {
+                        let _ = sender.send(Message::Text(json.into())).await;
+                    }
+
+                    // replay history for each subscribed topic
+                    for topic in &initial_topics {
+                        let msgs = {
+                            let conn = db.lock().unwrap();
+                            load_messages(&conn, topic).unwrap_or_default()
                         };
-
-                        if let Ok(json) = serde_json::to_string(&init) {
-                            let _ = sender.send(Message::Text(json.into())).await;
-                        }
-
-                        let send_task = tokio::spawn(async move {
-                            while let Ok(msg) = rx.recv().await {
-                                if sender.send(Message::Text(msg)).await.is_err() {
-                                    break;
-                                }
+                        for msg in msgs {
+                            let ws_msg = ClientCommand::Chat {
+                                peer_id: Some(msg.peer_id),
+                                nickname: Some(msg.nickname),
+                                content: msg.content,
+                                timestamp: Some(msg.timestamp),
+                                message_id: Some(msg.message_id),
+                                topic: msg.topic,
+                            };
+                            if let Ok(json) = serde_json::to_string(&ws_msg) {
+                                let _ = sender.send(Message::Text(json.into())).await;
                             }
-                        });
-
-                        let recv_task = tokio::spawn(async move {
-                            while let Some(Ok(Message::Text(text))) = receiver.next().await {
-                                println!("WS recv: {text}"); // add this
-                                match serde_json::from_str::<ClientCommand>(&text) {
-                                    Ok(cmd) => { 
-                                        println!("Deserialized: {cmd:?}");
-                                        let _ = to_swarm.send(cmd); 
-                                    }
-                                    Err(e) => eprintln!("Deserialize error: {e}"),
-                                }
-                            }
-                        });
-
-                        tokio::select! {
-                            _ = send_task => {},
-                            _ = recv_task => {},
                         }
-                    })
-                }
-            }))
-            .layer(
-                CorsLayer::new()
-                    .allow_origin(Any)
-                    .allow_methods(Any)
-                    .allow_headers(Any),
-            );
+                    }
+
+                    let send_task = tokio::spawn(async move {
+                        while let Ok(msg) = rx.recv().await {
+                            if sender.send(Message::Text(msg)).await.is_err() {
+                                break;
+                            }
+                        }
+                    });
+
+                    let recv_task = tokio::spawn(async move {
+                        while let Some(Ok(Message::Text(text))) = receiver.next().await {
+                            match serde_json::from_str::<ClientCommand>(&text) {
+                                Ok(cmd) => { 
+                                    let _ = to_swarm.send(cmd); 
+                                }
+                                Err(e) => eprintln!("Deserialize error: {e}"),
+                            }
+                        }
+                    });
+
+                    tokio::select! {
+                        _ = send_task => {},
+                        _ = recv_task => {},
+                    }
+                })
+            }
+        }))
+        .layer(
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any),
+        );
 
         let port = std::env::var("PORT").unwrap_or_else(|_| "3000".to_string());
         let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{port}")).await.unwrap();
@@ -264,8 +381,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
 
             Some(cmd) = to_swarm_rx.recv() => {
-                println!("{:?}", cmd);
-
                 match cmd {
                     ClientCommand::Subscribe { topic: name } => {
                         if !active_topics.contains_key(&name) {
@@ -299,6 +414,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
                             Ok((msg, payload)) => {
                                 if let Err(e) = swarm.behaviour_mut().gossipsub.publish(t, payload) {
                                     eprintln!("Publish error: {e:?}");
+                                }
+
+                                seen_ids.insert(msg.message_id.clone());
+
+                                if let Err(e) = store_message(&db.lock().unwrap(), &msg) {
+                                    eprintln!("DB error: {e}");
                                 }
 
                                 let ws_msg = ClientCommand::Chat {
@@ -373,6 +494,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 })) => {
                     match decode_message(&message.data) {
                         Ok(msg) => {
+                            if !validate_message(&msg) {
+                                continue;
+                            }
+                            if !seen_ids.insert(msg.message_id.clone()) {
+                                continue;
+                            }
+
+                            // store msgs
+                            if let Err(e) = store_message(&db.lock().unwrap(), &msg) {
+                                eprintln!("DB error: {e}");
+                            }
+
                             println!(
                                 "\x1b[32m[{}]\x1b[0m ({}): {}",
                                 msg.nickname, msg.peer_id, msg.content
@@ -388,12 +521,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
                             }).to_string();
                             let _ = broadcast_tx.send(json);
                         }
-                        Err(_) => {
-                            println!("[raw]: {}", String::from_utf8_lossy(&message.data));
-                            let _ = broadcast_tx.send(
-                                String::from_utf8_lossy(&message.data).to_string()
-                            );
-                        }
+
+                        Err(_) => {}
                     }
                 }
 
