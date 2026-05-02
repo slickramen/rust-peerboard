@@ -57,11 +57,16 @@ const SubscribeModal = ({
 }: SubscribeModalProps) => {
 	const [input, setInput] = useState("");
 
+	const TOPIC_REGEX = /^[a-z0-9-]+$/;
+
+	const trimmed = input.trim();
+	const isValidFormat = trimmed === "" || TOPIC_REGEX.test(trimmed);
+	const isAlreadySubscribed = subscribedTopics.has(`peerboard/v1/${trimmed}`);
+	const canSubmit = trimmed !== "" && isValidFormat && !isAlreadySubscribed;
+
 	function handleSubscribe() {
-		const name = input.trim();
-		const full = `peerboard/v1/${name}`;
-		if (!full || subscribedTopics.has(full)) return;
-		onSubscribe(full);
+		if (!canSubmit) return;
+		onSubscribe(`peerboard/v1/${trimmed}`);
 		setInput("");
 	}
 
@@ -69,7 +74,7 @@ const SubscribeModal = ({
 		<div className="modal-overlay" onClick={onClose}>
 			<div className="modal" onClick={(e) => e.stopPropagation()}>
 				<div className="modal-header">
-					<span>Channels</span>
+					<span>Topics</span>
 					<button className="modal-close" onClick={onClose}>
 						×
 					</button>
@@ -78,7 +83,7 @@ const SubscribeModal = ({
 				<div className="input-area">
 					<input
 						type="text"
-						placeholder="New channel name..."
+						placeholder="e.g. off-topic"
 						value={input}
 						onChange={(e) => setInput(e.target.value)}
 						onKeyDown={(e) =>
@@ -87,14 +92,24 @@ const SubscribeModal = ({
 						autoFocus
 					/>
 					<button
+						className="join-button"
 						onClick={handleSubscribe}
-						disabled={
-							!input.trim() || subscribedTopics.has(input.trim())
-						}
+						disabled={!canSubmit}
 					>
 						Join
 					</button>
 				</div>
+
+				{trimmed && !isValidFormat && (
+					<span className="modal-input-error">
+						Only lowercase letters, numbers, and hyphens allowed.
+					</span>
+				)}
+				{trimmed && isAlreadySubscribed && (
+					<span className="modal-input-error">
+						Already subscribed to this topic.
+					</span>
+				)}
 
 				<div className="modal-channel-list">
 					{[...subscribedTopics].map((topic) => (
@@ -111,7 +126,7 @@ const SubscribeModal = ({
 						</div>
 					))}
 					{subscribedTopics.size === 0 && (
-						<p className="modal-empty">No channels yet.</p>
+						<p className="modal-empty">No topics yet.</p>
 					)}
 				</div>
 			</div>

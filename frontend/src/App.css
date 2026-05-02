@@ -170,3 +170,32 @@
 	text-align: center;
 	color: var(--text-muted);
 }
+
+.no-messages {
+	position: relative;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.no-messages-label {
+	z-index: 1;
+	background-color: var(--message-channel-colour);
+	padding: 8px;
+	color: var(--text-muted);
+	font-size: 14px;
+}
+
+.no-messages::before {
+	position: absolute;
+	content: "";
+	height: 1px;
+	width: 90%;
+	left: 0;
+	right: 0;
+	top: 50%;
+
+	background-color: var(--text-muted);
+	opacity: 0.5;
+	margin: 0 auto;
+}

@@ -6,20 +6,11 @@ import Header from "./components/Header";
 import "./App.css";
 import { groupMessages } from "./groupMsg";
 import getAvatar from "./hashString";
-
-function formatTime(timestamp: number): string {
-	return new Date(timestamp * 1000).toLocaleTimeString([], {
-		hour: "numeric",
-		minute: "2-digit",
-		hour12: true,
-	});
-}
+import MessageBody from "./components/MessageBody";
 
 export default function App() {
 	const [input, setInput] = useState("");
-	const [activeTopic, setActiveTopic] = useState<string | null>(
-		"peerboard/v1/general",
-	);
+	const [activeTopic, setActiveTopic] = useState<string | null>(null);
 	const [seenCounts, setSeenCounts] = useState<Record<string, number>>({});
 
 	const {
@@ -47,6 +38,14 @@ export default function App() {
 
 		send(input, activeTopic);
 		setInput("");
+	}
+
+	function handleUnsubscribe(topic: string) {
+		unsubscribe(topic);
+		if (topic === activeTopic) {
+			const remaining = [...subscribedTopics].filter((t) => t !== topic);
+			setActiveTopic(remaining[0] ?? null);
+		}
 	}
 
 	const groupedMessages = useMemo(
@@ -115,60 +114,18 @@ export default function App() {
 					<ChannelSelector
 						subscribedTopics={subscribedTopics}
 						onSubscribe={subscribe}
-						onUnsubscribe={unsubscribe}
+						onUnsubscribe={handleUnsubscribe}
 						activeTopic={activeTopic}
 						onTopicSelect={handleTopicSelect}
 						unreadTopics={unreadTopics}
 					/>
 					<div className="channel-body">
 						<div className="message-list">
-							<div className="welcome-to-channel">
-								<span className="welcome-message">
-									Welcome to #{topicName}
-								</span>
-								<span className="welcome-message-subtitle">
-									This is the beginning of the channel.
-								</span>
-							</div>
-							{groupedMessages.length === 0 && (
-								<div>No messages yet.</div>
-							)}
-							{groupedMessages.map((group, i) => (
-								<div key={i} className="message-group">
-									<div className="avatar chat">
-										<img
-											src={`/icons/${group.avatar_id}.png`}
-										/>
-									</div>
+							<MessageBody
+								activeTopic={activeTopic}
+								groupedMessages={groupedMessages}
+							/>
 
-									<div className="text-content">
-										<div className="group-title">
-											<span className="meta">
-												<strong>
-													{group.nickname}
-												</strong>
-											</span>
-											<span className="time">
-												{formatTime(group.timestamp)}
-											</span>
-										</div>
-
-										{group.messages.map((msg) => (
-											<div
-												key={msg.message_id}
-												className="message-line"
-											>
-												<span className="content">
-													{msg.content}
-												</span>
-												<span className="time show-on-hover">
-													{formatTime(msg.timestamp)}
-												</span>
-											</div>
-										))}
-									</div>
-								</div>
-							))}
 							<div ref={bottomRef} />
 						</div>
 
