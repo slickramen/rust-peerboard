@@ -8,6 +8,7 @@ mod protocol;
 mod keypair;
 mod ws;
 mod bootstrap;
+mod behaviour;
 
 use db::*;
 use message::*;
@@ -18,6 +19,7 @@ use ws::{
     send_ws,
 };
 use bootstrap::bootstrap_node;
+use behaviour::{ChatBehaviourEvent, build_behaviour};
 
 use axum::{
     extract::ws::{WebSocketUpgrade},
@@ -31,20 +33,12 @@ use libp2p::{
     swarm::{SwarmEvent, dial_opts::DialOpts},
     tcp, yamux, PeerId,
 };
-use libp2p::identify;
 use std::{error::Error, time::Duration};
-use tokio::{io, select, sync::broadcast, time};
+use tokio::{select, sync::broadcast, time};
 use std::collections::HashMap;
 use gossipsub::IdentTopic;
 use rusqlite::Connection;
 use std::sync::{Arc, Mutex};
-
-#[derive(libp2p::swarm::NetworkBehaviour)]
-struct ChatBehaviour {
-    gossipsub: gossipsub::Behaviour,
-    kad: kad::Behaviour<kad::store::MemoryStore>,
-    identify: identify::Behaviour,
-}
 
 pub fn get_nickname() -> String {
     let args: Vec<String> = std::env::args().collect();
@@ -66,42 +60,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("Local peer id: {peer_id}");
 
     let nickname = get_nickname();
-
+    
     let mut swarm = libp2p::SwarmBuilder::with_existing_identity(key)
         .with_tokio()
-        .with_tcp(
-            tcp::Config::default(),
-            noise::Config::new,
-            yamux::Config::default,
-        )?
+        .with_tcp(tcp::Config::default(), noise::Config::new, yamux::Config::default)?
         .with_quic()
-        .with_behaviour(|key| {
-            let gossipsub_config = gossipsub::ConfigBuilder::default()
-                .validation_mode(gossipsub::ValidationMode::Strict)
-                .build()
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-
-            let gossipsub = gossipsub::Behaviour::new(
-                gossipsub::MessageAuthenticity::Signed(key.clone()),
-                gossipsub_config,
-            ).map_err(|e| Box::<dyn Error + Send + Sync>::from(e.to_string()))?;
-
-            let kad_config = kad::Config::new(
-                libp2p::StreamProtocol::new("/peerboard/kad/1.0.0")
-            );
-
-            let store = kad::store::MemoryStore::new(key.public().to_peer_id());
-            let kad = kad::Behaviour::with_config(key.public().to_peer_id(), store, kad_config);
-
-            let identify = identify::Behaviour::new(
-                identify::Config::new(
-                    "/peerboard/1.0.0".to_string(),
-                    key.public(),
-                )
-            );
-
-            Ok(ChatBehaviour { gossipsub, kad, identify })
-        })?
+        .with_behaviour(|key| build_behaviour(key))?
         .build();
 
     swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
@@ -191,7 +155,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
     loop {
         select! {
             _ = bootstrap_timer.tick() => {
-                let _ = swarm.behaviour_mut().kad.bootstrap();
+                let routing_table_size = swarm.behaviour_mut().kad.kbuckets()
+                    .fold(0, |acc, bucket| acc + bucket.num_entries());
+                
+                if routing_table_size < 3 {
+                    println!("Routing table has {routing_table_size} peers, rebootstrapping");
+                    let _ = swarm.behaviour_mut().kad.bootstrap();
+                }
             }
 
             Some(cmd) = to_swarm_rx.recv() => {
@@ -222,7 +192,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
                     ClientCommand::Unsubscribe { topic: name } => {
                         if let Some(t) = active_topics.lock().unwrap().remove(&name) {
-                            swarm.behaviour_mut().gossipsub.unsubscribe(&t);
+                            if let Err(e) = swarm.behaviour_mut().gossipsub.unsubscribe(&t) {
+                                eprintln!("Unsubscribe error: {e:?}");
+                            }
                             remove_topic(&db.lock().unwrap(), &name)?;
                             send_ws(&broadcast_tx, ClientCommand::Unsubscribed { topic: name });
                         }
@@ -244,13 +216,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                     eprintln!("DB error: {e}");
                                 }
 
+                                println!("[{}] ({}): {}", msg.nickname, msg.peer_id, msg.content);
+                                
                                 let ws_msg = make_chat_command(&msg, &topic);
-
-                                println!(
-                                    "[{}] ({}): {}",
-                                    msg.nickname, msg.peer_id, msg.content
-                                );
-
                                 send_ws(&broadcast_tx, ws_msg);
                             }
                             Err(e) => eprintln!("Encode error: {e}"),
@@ -277,6 +245,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         kad::Event::RoutingUpdated { peer, .. } => {
                             swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer);
                         }
+
+                        kad::Event::RoutablePeer { peer, .. } => {
+                            swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer);
+                        }
+
+                        kad::Event::UnroutablePeer { peer: _ } => {
+                            let routing_table_size = swarm.behaviour_mut().kad.kbuckets()
+                                .fold(0, |acc, bucket| acc + bucket.num_entries());
+                            
+                            if routing_table_size < 3 {
+                                println!("Routing table dropped below 3 peers, rebootstrapping");
+                                let _ = swarm.behaviour_mut().kad.bootstrap();
+                            }
+                        }
+
                         kad::Event::OutboundQueryProgressed { result, .. } => {
                             match result {
                                 kad::QueryResult::GetClosestPeers(Ok(ok)) => {
@@ -298,39 +281,23 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
 
                 SwarmEvent::Behaviour(ChatBehaviourEvent::Gossipsub(gossipsub::Event::Message {
-                    message,
-                    ..
+                    message, ..
                 })) => {
                     match decode_message(&message.data) {
                         Ok(msg) => {
-                            if !validate_message(&msg) {
-                                continue;
-                            }
-                            if !seen_ids.insert(msg.message_id.clone()) {
-                                continue;
-                            }
+                            if !validate_message(&msg) { continue; }
+                            if !seen_ids.insert(msg.message_id.clone()) { continue; }
 
-                            // store msgs
                             if let Err(e) = store_message(&db.lock().unwrap(), &msg) {
                                 eprintln!("DB error: {e}");
                             }
 
-                            println!(
-                                "[{}] ({}): {}",
-                                msg.nickname, msg.peer_id, msg.content
-                            );
-                            let json = serde_json::json!({
-                                "type": "chat",
-                                "nickname": msg.nickname,
-                                "peer_id": msg.peer_id,
-                                "content": msg.content,
-                                "timestamp": msg.timestamp,
-                                "message_id": msg.message_id,
-                                "topic": message.topic.to_string(),
-                            }).to_string();
-                            let _ = broadcast_tx.send(json);
-                        }
+                            println!("[{}] ({}): {}", msg.nickname, msg.peer_id, msg.content);
 
+                            let topic = message.topic.to_string();
+                            let ws_msg = make_chat_command(&msg, &topic);
+                            send_ws(&broadcast_tx, ws_msg);
+                        }
                         Err(_) => {}
                     }
                 }

@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use tokio::sync::broadcast;
 
 use crate::peerboard::PeerBoardMessage;
 
