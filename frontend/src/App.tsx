@@ -13,7 +13,9 @@ function formatTime(timestamp: number): string {
 
 export default function App() {
 	const [input, setInput] = useState("");
-	const [activeTopic, setActiveTopic] = useState<string | null>("general");
+	const [activeTopic, setActiveTopic] = useState<string | null>(
+		"peerboard/v1/general",
+	);
 	const [seenCounts, setSeenCounts] = useState<Record<string, number>>({});
 
 	const {

@@ -26,7 +26,10 @@ const Channel = ({
 
 	if (!name) return null;
 
-	const displayName = name.substring(0, 2).toLowerCase();
+	const displayName = name
+		.replace("peerboard/v1/", "")
+		.substring(0, 2)
+		.toLowerCase();
 	return (
 		<div
 			className={`sidebar-channel ${active ? "active" : ""}`}
@@ -55,8 +58,9 @@ const SubscribeModal = ({
 
 	function handleSubscribe() {
 		const name = input.trim();
-		if (!name || subscribedTopics.has(name)) return;
-		onSubscribe(name);
+		const full = `peerboard/v1/${name}`;
+		if (!full || subscribedTopics.has(full)) return;
+		onSubscribe(full);
 		setInput("");
 	}
 
@@ -94,7 +98,9 @@ const SubscribeModal = ({
 				<div className="modal-channel-list">
 					{[...subscribedTopics].map((topic) => (
 						<div className="modal-channel-row" key={topic}>
-							<span className="modal-channel-name">{topic}</span>
+							<span className="modal-channel-name">
+								{topic.replace("peerboard/v1/", "")}
+							</span>
 							<button
 								className="modal-unsub-btn"
 								onClick={() => onUnsubscribe(topic)}

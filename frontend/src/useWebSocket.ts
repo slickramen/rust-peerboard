@@ -35,7 +35,7 @@ export function useWebSocket(): UseWebSocketReturn {
 	}, []);
 
 	const send = useCallback(
-		(content: string, topic = "general") => {
+		(content: string, topic = "peerboard/v1/general") => {
 			sendRaw({ type: "chat", topic, content });
 		},
 		[sendRaw],

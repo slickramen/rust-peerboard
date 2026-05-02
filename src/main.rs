@@ -164,7 +164,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     swarm.behaviour_mut().gossipsub.subscribe(&topic)?;
 
     let mut active_topics: HashMap<String, IdentTopic> = HashMap::new();
-    active_topics.insert("general".to_string(), topic.clone());
+    active_topics.insert("peerboard/v1/general".to_string(), topic.clone());
 
     let bootstrap_peer_id: PeerId = "12D3KooWCvwqT3JUzVQczCvAVFa9EGzNqjHHSMVHVhm3RVyscCNY".parse()?;
     let addrs = vec![
@@ -269,7 +269,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 match cmd {
                     ClientCommand::Subscribe { topic: name } => {
                         if !active_topics.contains_key(&name) {
-                            let t = gossipsub::IdentTopic::new(format!("peerboard/v1/{name}"));
+                            let t = gossipsub::IdentTopic::new(&name);
                             match swarm.behaviour_mut().gossipsub.subscribe(&t) {
                                 Ok(_) => {
                                     active_topics.insert(name.clone(), t);
@@ -293,7 +293,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
                     ClientCommand::Chat { topic, content, .. } => {
                         let t = active_topics.get(&topic).cloned()
-                            .unwrap_or_else(|| gossipsub::IdentTopic::new(format!("peerboard/v1/{topic}")));
+                            .unwrap_or_else(|| gossipsub::IdentTopic::new(&topic));
 
                         match build_message(&peer_id, t.hash().as_str(), &content, nickname) {
                             Ok((msg, payload)) => {
@@ -333,7 +333,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 SwarmEvent::Behaviour(ChatBehaviourEvent::Gossipsub(gossipsub::Event::Subscribed {
                     peer_id, topic
                 })) => {
-                    // println!("Peer {peer_id} subscribed to {topic}");
+                    println!("Peer {peer_id} subscribed to {topic}");
                 }
 
                 SwarmEvent::Behaviour(ChatBehaviourEvent::Gossipsub(gossipsub::Event::GossipsubNotSupported {
@@ -378,12 +378,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 msg.nickname, msg.peer_id, msg.content
                             );
                             let json = serde_json::json!({
+                                "type": "chat",
                                 "nickname": msg.nickname,
                                 "peer_id": msg.peer_id,
                                 "content": msg.content,
                                 "timestamp": msg.timestamp,
                                 "message_id": msg.message_id,
-                                "topic": msg.topic,
+                                "topic": message.topic.to_string(),
                             }).to_string();
                             let _ = broadcast_tx.send(json);
                         }
