@@ -135,6 +135,7 @@ const SubscribeModal = ({
 };
 
 interface ChannelSelectorProps {
+	connected: boolean;
 	subscribedTopics: Set<string>;
 	onSubscribe: (topic: string) => void;
 	onUnsubscribe: (topic: string) => void;
@@ -144,6 +145,7 @@ interface ChannelSelectorProps {
 }
 
 export const ChannelSelector = ({
+	connected,
 	subscribedTopics,
 	onSubscribe,
 	onUnsubscribe,
@@ -154,11 +156,17 @@ export const ChannelSelector = ({
 	const [modalOpen, setModalOpen] = useState(false);
 
 	function handleSubscribe(topic: string) {
+		if (!connected) return;
 		onSubscribe(topic);
 	}
 
 	function handleUnsubscribe(topic: string) {
+		if (!connected) return;
 		onUnsubscribe(topic);
+	}
+
+	if (!connected) {
+		return <div className="channel-header">{/* <Channel addBtn /> */}</div>;
 	}
 
 	return (

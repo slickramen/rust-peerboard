@@ -1,6 +1,7 @@
 import type { MessageGroup } from "../types/types";
 
 interface MessageBodyProps {
+	connected: boolean;
 	activeTopic: string | null;
 	groupedMessages: MessageGroup[];
 }
@@ -13,8 +14,25 @@ function formatTime(timestamp: number): string {
 	});
 }
 
-const MessageBody = ({ activeTopic, groupedMessages }: MessageBodyProps) => {
+const MessageBody = ({
+	connected,
+	activeTopic,
+	groupedMessages,
+}: MessageBodyProps) => {
 	const topicName = activeTopic?.replace("peerboard/v1/", "");
+
+	if (!connected) {
+		return (
+			<>
+				<div className="welcome-to-channel">
+					<span className="welcome-message">Not connected</span>
+					<span className="welcome-message-subtitle">
+						Connect to the server to begin chatting.
+					</span>
+				</div>
+			</>
+		);
+	}
 
 	if (!activeTopic) {
 		return (

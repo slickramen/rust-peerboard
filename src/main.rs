@@ -2,224 +2,70 @@ pub mod peerboard {
     include!(concat!(env!("OUT_DIR"), "/peerboard.v1.rs"));
 }
 
+mod db;
+mod message;
+mod protocol;
+mod keypair;
+mod ws;
+mod bootstrap;
+
+use db::*;
+use message::*;
+use protocol::*;
+use keypair::load_or_generate_keypair;
+use ws::{
+    handle_socket,
+    send_ws,
+};
+use bootstrap::bootstrap_node;
+
 use axum::{
-    extract::ws::{Message, WebSocket, WebSocketUpgrade},
+    extract::ws::{WebSocketUpgrade},
     routing::get,
     Router,
 };
-use tower_http::{
-    cors::{Any, CorsLayer},
-};
-
-use futures::{SinkExt, StreamExt};
+use tower_http::cors::{Any, CorsLayer};
+use futures::{StreamExt};
 use libp2p::{
-    gossipsub, identity, kad, noise,
-    swarm::{NetworkBehaviour, SwarmEvent, dial_opts::DialOpts},
-    tcp, yamux, Multiaddr, PeerId,
+    gossipsub, kad, noise,
+    swarm::{SwarmEvent, dial_opts::DialOpts},
+    tcp, yamux, PeerId,
 };
 use libp2p::identify;
-use peerboard::PeerBoardMessage;
-use prost::Message as ProstMessage;
 use std::{error::Error, time::Duration};
 use tokio::{io, select, sync::broadcast, time};
-use chrono::Utc;
-use uuid::Uuid;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use gossipsub::IdentTopic;
-use rusqlite::{Connection, params};
+use rusqlite::Connection;
 use std::sync::{Arc, Mutex};
 
-#[derive(NetworkBehaviour)]
+#[derive(libp2p::swarm::NetworkBehaviour)]
 struct ChatBehaviour {
     gossipsub: gossipsub::Behaviour,
     kad: kad::Behaviour<kad::store::MemoryStore>,
     identify: identify::Behaviour,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum ClientCommand {
-    Init {
-        user_id: String,
-        username: String,
-        topics: Vec<String>,
-    },
-    Chat {
-        topic: String,
-        content: String,
-        #[serde(default)]
-        peer_id: Option<String>,
-        #[serde(default)]
-        nickname: Option<String>,
-        #[serde(default)]
-        timestamp: Option<i64>,
-        #[serde(default)]
-        message_id: Option<String>,
-    },
-    Subscribe { topic: String },
-    Unsubscribed { topic: String },
-    Unsubscribe { topic: String },
-    Subscribed { topic: String },
-    Error { message: String },
-}
-
-fn build_message(
-    peer_id: &PeerId,
-    topic: &str,
-    content: &str,
-    nickname: &str,
-) -> Result<(PeerBoardMessage, Vec<u8>), Box<dyn Error>> {
-    if content.as_bytes().len() > 4096 {
-        return Err("content exceeds 4096 bytes".into());
-    }
-    if nickname.as_bytes().len() > 32 {
-        return Err("nickname exceeds 32 bytes".into());
-    }
-    if !topic.starts_with("peerboard/v1/") {
-        return Err("topic does not begin with peerboard/v1/".into());
-    }
-
-    let timestamp = Utc::now().timestamp();
-
-    let msg = PeerBoardMessage {
-        peer_id: peer_id.to_string(),
-        topic: topic.to_string(),
-        content: content.to_string(),
-        timestamp,
-        message_id: Uuid::new_v4().to_string(),
-        nickname: nickname.to_string(),
-    };
-
-    let mut buf = Vec::with_capacity(msg.encoded_len());
-    msg.encode(&mut buf)?;
-
-    Ok((msg, buf))
-}
-
-fn validate_message(msg: &PeerBoardMessage) -> bool {
-    if msg.content.as_bytes().len() > 4096 {
-        return false;
-    }
-    if msg.nickname.as_bytes().len() > 32 {
-        return false;
-    }
-    if !msg.topic.starts_with("peerboard/v1/") {
-        return false;
-    }
-    let now = Utc::now().timestamp();
-    if msg.timestamp > now + 300 {
-        return false;
-    }
-    true
-}
-
-fn decode_message(data: &[u8]) -> Result<PeerBoardMessage, prost::DecodeError> {
-    PeerBoardMessage::decode(data)
-}
-
-fn send_ws(tx: &broadcast::Sender<String>, msg: ClientCommand) {
-    if let Ok(json) = serde_json::to_string(&msg) {
-        let _ = tx.send(json);
-    }
-}
-
-fn setup_db(conn: &Connection) -> Result<(), Box<dyn Error>> {
-    conn.execute_batch("
-        CREATE TABLE IF NOT EXISTS messages (
-            message_id  TEXT PRIMARY KEY,
-            peer_id     TEXT NOT NULL,
-            nickname    TEXT NOT NULL,
-            content     TEXT NOT NULL,
-            topic       TEXT NOT NULL,
-            timestamp   INTEGER NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS topics (
-            topic TEXT PRIMARY KEY
-        );
-    ")?;
-    Ok(())
-}
-
-fn store_message(conn: &Connection, msg: &PeerBoardMessage) -> Result<bool, Box<dyn Error>> {
-    let rows = conn.execute(
-        "INSERT OR IGNORE INTO messages (message_id, peer_id, nickname, content, topic, timestamp)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![
-            msg.message_id,
-            msg.peer_id,
-            msg.nickname,
-            msg.content,
-            msg.topic,
-            msg.timestamp,
-        ],
-    )?;
-
-    // Check if duplicate
-    Ok(rows > 0)
-}
-
-fn load_messages(conn: &Connection, topic: &str) -> Result<Vec<PeerBoardMessage>, Box<dyn Error>> {
-    let mut stmt = conn.prepare(
-        "SELECT message_id, peer_id, nickname, content, topic, timestamp
-         FROM messages
-         WHERE topic = ?1
-         ORDER BY timestamp ASC"
-    )?;
-
-    let msgs = stmt.query_map(params![topic], |row| {
-        Ok(PeerBoardMessage {
-            message_id: row.get(0)?,
-            peer_id: row.get(1)?,
-            nickname: row.get(2)?,
-            content: row.get(3)?,
-            topic: row.get(4)?,
-            timestamp: row.get(5)?,
+pub fn get_nickname() -> String {
+    let args: Vec<String> = std::env::args().collect();
+    args.windows(2)
+        .find_map(|w| {
+            if w[0] == "--nickname" || w[0] == "-n" {
+                Some(w[1].clone())
+            } else {
+                None
+            }
         })
-    })?
-    .filter_map(|r| r.ok())
-    .collect();
-
-    Ok(msgs)
-}
-
-fn store_topic(conn: &Connection, topic: &str) -> Result<(), Box<dyn Error>> {
-    conn.execute("INSERT OR IGNORE INTO topics (topic) VALUES (?1)", params![topic])?;
-    Ok(())
-}
-
-fn remove_topic(conn: &Connection, topic: &str) -> Result<(), Box<dyn Error>> {
-    conn.execute("DELETE FROM topics WHERE topic = ?1", params![topic])?;
-    Ok(())
-}
-
-fn load_topics(conn: &Connection) -> Result<Vec<String>, Box<dyn Error>> {
-    let mut stmt = conn.prepare("SELECT topic FROM topics")?;
-    let topics = stmt.query_map([], |row| row.get::<_, String>(0))?
-        .filter_map(|r| r.ok())
-        .collect();
-    Ok(topics)
+        .unwrap_or_else(|| "anon".to_string())
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let key = identity::Keypair::generate_ed25519();
+    let key = load_or_generate_keypair()?;
     let peer_id = PeerId::from(key.public());
     println!("Local peer id: {peer_id}");
 
-    // let nickname = {
-    //     print!("Enter your nickname: ");
-    //     io::stdout().flush().await?;
-    //     let mut lines = io::BufReader::new(io::stdin()).lines();
-    //     lines.next_line().await?.unwrap_or_default().trim().to_string()
-    // };
-
-    // if nickname.is_empty() || nickname.len() > 32 {
-    //     eprintln!("Nickname must be 1-32 bytes.");
-    //     return Ok(());
-    // }
-
-    let nickname = "martyn test";
+    let nickname = get_nickname();
 
     let mut swarm = libp2p::SwarmBuilder::with_existing_identity(key)
         .with_tokio()
@@ -261,16 +107,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
     swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
     swarm.listen_on("/ip4/0.0.0.0/udp/0/quic-v1".parse()?)?;
 
-    let bootstrap_peer_id: PeerId = "12D3KooWCvwqT3JUzVQczCvAVFa9EGzNqjHHSMVHVhm3RVyscCNY".parse()?;
-    let addrs = vec![
-        "/ip4/170.64.177.57/tcp/8000".parse::<Multiaddr>()?,
-        "/ip4/170.64.177.57/udp/8000/quic-v1".parse::<Multiaddr>()?,
-    ];
-    swarm.behaviour_mut().kad.add_address(&bootstrap_peer_id, addrs[0].clone());
-    swarm.behaviour_mut().kad.add_address(&bootstrap_peer_id, addrs[1].clone());
+    let bootstrap = bootstrap_node();
+    for addr in &bootstrap.addrs {
+        swarm.behaviour_mut().kad.add_address(&bootstrap.peer_id, addr.clone());
+    }
     swarm.dial(
-        DialOpts::peer_id(bootstrap_peer_id)
-            .addresses(addrs)
+        DialOpts::peer_id(bootstrap.peer_id)
+            .addresses(bootstrap.addrs)
             .build(),
     )?;
 
@@ -288,18 +131,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     store_topic(&db.lock().unwrap(), "peerboard/v1/general")?;
 
-    let persisted_topics = load_topics(&db.lock().unwrap())?;
-    println!("Persisted topics from DB: {:?}", persisted_topics);
+    let loaded_topics = load_topics(&db.lock().unwrap())?;
+    println!("Loaded topics from DB: {:?}", loaded_topics);
 
     let active_topics: Arc<Mutex<HashMap<String, IdentTopic>>> = Arc::new(Mutex::new(HashMap::new()));
 
-    for t in &persisted_topics {
+    for t in &loaded_topics {
         let ident = gossipsub::IdentTopic::new(t);
         match swarm.behaviour_mut().gossipsub.subscribe(&ident) {
             Ok(_) => {
                 active_topics.lock().unwrap().insert(t.clone(), ident);
             }
-            Err(e) => eprintln!("Failed to resubscribe to {t}: {e}"),
+            Err(e) => eprintln!("Unable to resubscribe to {t}: {e}"),
         }
     }
 
@@ -318,85 +161,24 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("Loaded {} message IDs from store", seen_ids.len());
 
     let db_ws = db.clone();
+    let nickname_ws = nickname.clone();
 
     tokio::spawn(async move {
-    let app = Router::new()
-        .route("/ws", get(move |ws: WebSocketUpgrade| {
-            let tx = broadcast_tx2.clone();
-            let to_swarm = to_swarm_tx.clone();
-            let db = db_ws.clone();
-            let active_topics_ws = active_topics_ws.clone();
+        let app = Router::new()
+            .route("/ws", get(move |ws: WebSocketUpgrade| {
+                let tx = broadcast_tx2.clone();
+                let to_swarm = to_swarm_tx.clone();
+                let db = db_ws.clone();
+                let active_topics_ws = active_topics_ws.clone();
 
-            async move {
-                ws.on_upgrade(move |socket: WebSocket| async move {
-                    let mut rx = tx.subscribe();
-                    let (mut sender, mut receiver) = socket.split(); // add this
-
-                    let initial_topics: Vec<String> = active_topics_ws.lock().unwrap().keys().cloned().collect();
-
-                    let init = ClientCommand::Init {
-                        user_id: peer_id.to_string(),
-                        username: nickname.to_string(),
-                        topics: initial_topics.clone(),
-                    };
-
-                    if let Ok(json) = serde_json::to_string(&init) {
-                        let _ = sender.send(Message::Text(json.into())).await;
-                    }
-
-                    // replay history for each subscribed topic
-                    for topic in &initial_topics {
-                        let msgs = {
-                            let conn = db.lock().unwrap();
-                            load_messages(&conn, topic).unwrap_or_default()
-                        };
-                        for msg in msgs {
-                            let ws_msg = ClientCommand::Chat {
-                                peer_id: Some(msg.peer_id),
-                                nickname: Some(msg.nickname),
-                                content: msg.content,
-                                timestamp: Some(msg.timestamp),
-                                message_id: Some(msg.message_id),
-                                topic: msg.topic,
-                            };
-                            if let Ok(json) = serde_json::to_string(&ws_msg) {
-                                let _ = sender.send(Message::Text(json.into())).await;
-                            }
-                        }
-                    }
-
-                    let send_task = tokio::spawn(async move {
-                        while let Ok(msg) = rx.recv().await {
-                            if sender.send(Message::Text(msg)).await.is_err() {
-                                break;
-                            }
-                        }
-                    });
-
-                    let recv_task = tokio::spawn(async move {
-                        while let Some(Ok(Message::Text(text))) = receiver.next().await {
-                            match serde_json::from_str::<ClientCommand>(&text) {
-                                Ok(cmd) => { 
-                                    let _ = to_swarm.send(cmd); 
-                                }
-                                Err(e) => eprintln!("Deserialize error: {e}"),
-                            }
-                        }
-                    });
-
-                    tokio::select! {
-                        _ = send_task => {},
-                        _ = recv_task => {},
-                    }
-                })
-            }
-        }))
-        .layer(
-            CorsLayer::new()
-                .allow_origin(Any)
-                .allow_methods(Any)
-                .allow_headers(Any),
-        );
+                async move {
+                    ws.on_upgrade(move |socket| handle_socket(
+                        socket, peer_id, nickname_ws,
+                        tx, to_swarm, db, active_topics_ws,
+                    ))
+                }
+            }))
+            .layer(CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any));
 
         let port = std::env::var("PORT").unwrap_or_else(|_| "3000".to_string());
         let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{port}")).await.unwrap();
@@ -405,8 +187,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     });
 
     let mut bootstrap_timer = time::interval(Duration::from_secs(30));
-
-    println!("--- Node Ready ---");
 
     loop {
         select! {
@@ -425,17 +205,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                     active_topics.lock().unwrap().insert(name.clone(), t);
                                     send_ws(&broadcast_tx, ClientCommand::Subscribed { topic: name.clone() });
 
-                                    // replay stored messages for this topic
                                     let msgs = load_messages(&db.lock().unwrap(), &name).unwrap_or_default();
                                     for msg in msgs {
-                                        let ws_msg = ClientCommand::Chat {
-                                            peer_id: Some(msg.peer_id),
-                                            nickname: Some(msg.nickname),
-                                            content: msg.content,
-                                            timestamp: Some(msg.timestamp),
-                                            message_id: Some(msg.message_id),
-                                            topic: msg.topic,
-                                        };
+                                        let ws_msg = make_chat_command(&msg, &msg.topic.clone());
                                         send_ws(&broadcast_tx, ws_msg);
                                     }
                                 }
@@ -460,7 +232,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         let t = active_topics.lock().unwrap().get(&topic).cloned()
                             .unwrap_or_else(|| gossipsub::IdentTopic::new(&topic));
 
-                        match build_message(&peer_id, &topic, &content, nickname) { 
+                        match build_message(&peer_id, &topic, &content, nickname.as_str()) { 
                             Ok((msg, payload)) => {
                                 if let Err(e) = swarm.behaviour_mut().gossipsub.publish(t, payload) {
                                     eprintln!("Publish error: {e:?}");
@@ -472,17 +244,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                     eprintln!("DB error: {e}");
                                 }
 
-                                let ws_msg = ClientCommand::Chat {
-                                    peer_id: Some(msg.peer_id.clone()),
-                                    nickname: Some(msg.nickname.clone()),
-                                    content: msg.content.clone(),
-                                    timestamp: Some(msg.timestamp),
-                                    message_id: Some(msg.message_id.clone()),
-                                    topic: topic.clone(),
-                                };
+                                let ws_msg = make_chat_command(&msg, &topic);
 
                                 println!(
-                                    "\x1b[32m[{}]\x1b[0m ({}): {}",
+                                    "[{}] ({}): {}",
                                     msg.nickname, msg.peer_id, msg.content
                                 );
 
@@ -505,12 +270,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     peer_id, topic
                 })) => {
                     println!("Peer {peer_id} subscribed to {topic}");
-                }
-
-                SwarmEvent::Behaviour(ChatBehaviourEvent::Gossipsub(gossipsub::Event::GossipsubNotSupported {
-                    peer_id
-                })) => {
-                    // println!("Peer {peer_id} does not support Gossipsub");
                 }
 
                 SwarmEvent::Behaviour(ChatBehaviourEvent::Kad(event)) => {
@@ -557,7 +316,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                             }
 
                             println!(
-                                "\x1b[32m[{}]\x1b[0m ({}): {}",
+                                "[{}] ({}): {}",
                                 msg.nickname, msg.peer_id, msg.content
                             );
                             let json = serde_json::json!({
@@ -578,12 +337,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
                 SwarmEvent::ConnectionEstablished { peer_id, .. } => {
                     swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
-                }
-
-                SwarmEvent::OutgoingConnectionError { peer_id: Some(id), error, .. } => {
-                    if !error.to_string().contains("Connection refused") {
-                        // println!("Dial error to {id}: {error}");
-                    }
                 }
 
                 _ => {}

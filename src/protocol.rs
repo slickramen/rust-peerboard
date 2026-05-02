@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 
+use crate::peerboard::PeerBoardMessage;
+
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientCommand {
@@ -28,8 +30,13 @@ pub enum ClientCommand {
     Error { message: String },
 }
 
-pub fn send_ws(tx: &broadcast::Sender<String>, msg: ClientCommand) {
-    if let Ok(json) = serde_json::to_string(&msg) {
-        let _ = tx.send(json);
+pub fn make_chat_command(msg: &PeerBoardMessage, topic: &str) -> ClientCommand {
+    ClientCommand::Chat {
+        peer_id: Some(msg.peer_id.clone()),
+        nickname: Some(msg.nickname.clone()),
+        content: msg.content.clone(),
+        timestamp: Some(msg.timestamp),
+        message_id: Some(msg.message_id.clone()),
+        topic: topic.to_string(),
     }
 }

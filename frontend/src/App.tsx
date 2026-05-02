@@ -43,8 +43,7 @@ export default function App() {
 	function handleUnsubscribe(topic: string) {
 		unsubscribe(topic);
 		if (topic === activeTopic) {
-			const remaining = [...subscribedTopics].filter((t) => t !== topic);
-			setActiveTopic(remaining[0] ?? null);
+			setActiveTopic(null);
 		}
 	}
 
@@ -85,19 +84,6 @@ export default function App() {
 		}));
 	}
 
-	if (!connected) {
-		return (
-			<div className="app">
-				<header className="header">
-					<span className={"status disconnected"}>
-						<div className="connection-orb" />
-						offline
-					</span>
-				</header>
-			</div>
-		);
-	}
-
 	const topicName = activeTopic?.replace("peerboard/v1/", "");
 
 	return (
@@ -112,6 +98,7 @@ export default function App() {
 				<Sidebar />
 				<div className="channel-wrapper">
 					<ChannelSelector
+						connected={connected}
 						subscribedTopics={subscribedTopics}
 						onSubscribe={subscribe}
 						onUnsubscribe={handleUnsubscribe}
@@ -122,6 +109,7 @@ export default function App() {
 					<div className="channel-body">
 						<div className="message-list">
 							<MessageBody
+								connected={connected}
 								activeTopic={activeTopic}
 								groupedMessages={groupedMessages}
 							/>
@@ -135,9 +123,11 @@ export default function App() {
 								value={input}
 								onChange={(e) => setInput(e.target.value)}
 								placeholder={
-									activeTopic
-										? `Message #${topicName}...`
-										: "Select a channel..."
+									connected
+										? activeTopic
+											? `Message #${topicName}...`
+											: "Select a topic..."
+										: "Connect to the server..."
 								}
 								maxLength={4096}
 								disabled={!connected || !activeTopic}

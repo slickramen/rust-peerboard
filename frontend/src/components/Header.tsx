@@ -18,12 +18,14 @@ const Header = ({ connected, username, avatar_id }: HeaderProps) => {
 				{connected ? "online" : "offline"}
 			</span>
 
-			<div className="avatar-wrapper">
-				<strong>{username}</strong>
-				<div className="avatar">
-					<img src={`/icons/${avatar_id}.png`}></img>
+			{connected && (
+				<div className="avatar-wrapper">
+					<strong>{username}</strong>
+					<div className="avatar">
+						<img src={`/icons/${avatar_id}.png`}></img>
+					</div>
 				</div>
-			</div>
+			)}
 		</header>
 	);
 };
