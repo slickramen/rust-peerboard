@@ -24,7 +24,7 @@ This will compile the backend server.
 
 ### Frontend
 
-To run, from the repository root, run
+From the repository root, run
 
 ```
 cd frontend
